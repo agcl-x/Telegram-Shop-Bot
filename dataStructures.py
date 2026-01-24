@@ -34,6 +34,12 @@ class Customer:
     def __str__(self):
         pass
 
+class orderItem:
+    def __init__(self, s_productArticleIn, s_productPropertieIn, n_productCountIn):
+        self.s_productArticle = s_productArticleIn
+        self.s_productProperties = s_productPropertieIn
+        self.n_productCount = n_productCountIn
+
 class Order:
     natr_currOrderNumber = 1
 
@@ -43,6 +49,7 @@ class Order:
         self.s_TTN = ""
         self.s_status = ""
         self.date = datetime.now().strftime("%H:%M %d.%m.%Y")
+        self.natr_currOrderNumber += 1
 
     def __str__(self):
         s_outString = f'''\t<b>ЗАМОВЛЕННЯ №{self.natr_currOrderNumber}</b>
