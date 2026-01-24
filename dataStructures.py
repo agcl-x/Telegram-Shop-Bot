@@ -3,10 +3,14 @@ from datetime import datetime
 
 class Nomenclature:
     def __init__(self, s_productNameIn, s_productArticleIn,
-                 sd_productСharacteristicsToPriceIn = {}, s_productDescriptionIn = ""):
+                 sl_productPropertiesIn = [], sl_productPriceIn = [], nl_productCountIn = [], s_productDescriptionIn = ""):
         self.s_productName = s_productNameIn
         self.s_productArticle = s_productArticleIn
-        self.sd_productСharacteristicsToPrice = sd_productСharacteristicsToPriceIn
+
+        self.sl_productProperties = sl_productPropertiesIn
+        self.sl_productPrice = sl_productPriceIn
+        self.nl_productCount = nl_productCountIn
+
         self.s_productDescription = s_productDescriptionIn
 
     def __str__(self):
@@ -51,4 +55,4 @@ class Order:
         📩Статус: {self.s_status}\n
         📃Список покупок:\n'''
         for product in self.noml_orderNomenclaturesList:
-            s_outString += f'\t\t⚫{product.s_productArticle}:{tovar["prop"]} - {tovar["count"]}\n'
+            s_outString += f'\t\t⚫{product.s_productArticle}:{sl_productProperties} - {tovar["count"]}\n'
