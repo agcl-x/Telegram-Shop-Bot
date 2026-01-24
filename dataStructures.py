@@ -43,9 +43,9 @@ class orderItem:
 class Order:
     natr_currOrderNumber = 1
 
-    def __init__(self, cus_orderCustomerIn, noml_orderNomenclaturesListIn):
+    def __init__(self, cus_orderCustomerIn, noml_orderItemListIn):
         self.cus_orderCustomer = cus_orderCustomerIn
-        self.noml_orderNomenclaturesList = noml_orderNomenclaturesListIn
+        self.noml_orderItemListIn = noml_orderItemListIn
         self.s_TTN = ""
         self.s_status = ""
         self.date = datetime.now().strftime("%H:%M %d.%m.%Y")
@@ -61,5 +61,5 @@ class Order:
         🔢ТТН: {self.s_TTN}
         📩Статус: {self.s_status}\n
         📃Список покупок:\n'''
-        for product in self.noml_orderNomenclaturesList:
-            s_outString += f'\t\t⚫{product.s_productArticle}:{sl_productProperties} - {tovar["count"]}\n'
+        for item in self.noml_orderItemListIn:
+            s_outString += f'\t\t⚫{item.s_productArticle}:{item.s_productProperties} - {item.n_productCount}\n'
