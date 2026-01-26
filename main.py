@@ -9,6 +9,7 @@ import sqlite3
 import random
 from datetime import datetime
 from log import *
+from sqlInteraction import *
 
 with open('config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
