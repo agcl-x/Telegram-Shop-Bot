@@ -45,7 +45,7 @@ class Order:
 
     def __init__(self, cus_orderCustomerIn, noml_orderItemListIn):
         self.cus_orderCustomer = cus_orderCustomerIn
-        self.noml_orderItemListIn = noml_orderItemListIn
+        self.noml_orderItemList = noml_orderItemListIn
         self.s_TTN = ""
         self.s_status = ""
         self.date = datetime.now().strftime("%H:%M %d.%m.%Y")
