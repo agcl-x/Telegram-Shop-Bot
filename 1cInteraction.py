@@ -23,7 +23,30 @@ class Connection:
             self.v8 = None
 
     def getNomenclature(self, s_nameIn="", s_articleIn=""):
-        pass
+        if not self.v8: return None
+
+        query = self.v8.NewObject("Query")
+        query.Text = """
+                    SELECT TOP 1
+                        Ref, Description, Code
+                    FROM
+                        Catalog.Номенклатура
+                    WHERE
+                        Артикул = &Article OR Description = &Name
+                """
+        query.SetParameter("Article", s_articleIn)
+        query.SetParameter("Name", s_nameIn)
+
+        result = query.Execute()
+        if not result.IsEmpty():
+            selection = result.Select()
+            selection.Next()
+            return {
+                "Name": selection.Description,
+                "Code": selection.Code,
+                "GUID": str(self.v8.String(selection.Ref.UUID()))
+            }
+        return None
 
     def pushOrder(self, cor_orderIn):
         pass
