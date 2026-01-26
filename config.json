@@ -7,4 +7,5 @@
     "fromHour": 10,
     "toHour": 18,
     "timeToSleep": 30,
+    "connectionString": "Srvr=\"localhost\";Ref=\"work_base\";Usr=\"\";Pwd=\"\";"
 }
