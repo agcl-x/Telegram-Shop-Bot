@@ -102,4 +102,4 @@ class Connection:
             return False
 
     def closeConnection(self):
-        pass
+        self.v8 = None
