@@ -4,7 +4,7 @@ from log import *
 
 with open('config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
-    log_sys('Config.json read to config')
+    log_sys('config.json was succsesfully loaded')
 
 
 def fetch_as_dicts(query, params=()):
