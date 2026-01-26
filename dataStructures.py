@@ -63,3 +63,5 @@ class Order:
         📃Список покупок:\n'''
         for item in self.noml_orderItemListIn:
             s_outString += f'\t\t⚫{item.s_productArticle}:{item.s_productProperties} - {item.n_productCount}\n'
+
+        return s_outString
