@@ -661,7 +661,7 @@ def start(message):
 def my_orders(message):
     try:
         log(message.from_user.id, '"My orders" button pressed')
-        orderList = fetch_as_dicts("SELECT * FROM orders WHERE customerID = ?", (int(message.from_user.id),))
+        orderList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (int(message.from_user.id),))
         log(message.from_user.id, f"{len(orderList)} orders fetched from database")
         if orderList:
             szResultMessage = f'\t<b>🧾 МОЇ ЗАМОВЛЕННЯ</b>\n'
