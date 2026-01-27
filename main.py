@@ -703,25 +703,15 @@ def my_orders(message):
 @bot.message_handler(func=lambda message: message.text == "🛍️Зробити замовлення")
 def make_order(message):
     try:
-        global tempOrder
         log(message.from_user.id, '"Make order" button pressed')
 
-        tempOrder = {
-            "customerID": message.from_user.id,
-            "date": datetime.now().strftime("%H:%M %d.%m.%Y"),
-            "ifSended": False,
-            "TTN": "",
-            "orderTovarList": []
-        }
-        log(message.from_user.id, f'tempOrder initialized: {tempOrder}')
+        sd_productArticlesList = fetch_as_dicts("SELECT * FROM activeProductPool WHERE show = 1")
+        log(message.from_user.id, f"{len(sd_productArticlesList)} products article loaded from database")
 
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         row = []
-        DataList = fetch_as_dicts("SELECT * FROM products")
-        log(message.from_user.id, f"{len(DataList)} products loaded from database")
-
-        for idx, item in enumerate(DataList):
-            row.append(types.KeyboardButton(item["art"]))
+        for idx, productArticle in enumerate(sd_productArticlesList):
+            row.append(types.KeyboardButton(productArticle))
             if (idx + 1) % 3 == 0:
                 markup.row(*row)
                 row = []
@@ -729,15 +719,17 @@ def make_order(message):
             markup.row(*row)
         log(message.from_user.id, "Product buttons added to markup")
 
-        msgText = (
+        s_msgText = (
             "🤔 <b>Оберіть товар</b> за артикулом або просто <b>перешліть</b> повідомлення з нашого каналу 📨\n\n"
             "🆔 Нажміть на кнопку з відповідним артикулом\n\n\t\tабо\n\n"
             "📲 Перешліть повідомлення прямо сюди — і я все оброблю автоматично!"
         )
-        msg = bot.send_message(message.chat.id, msgText, reply_markup=markup, parse_mode='HTML')
+        msg = bot.send_message(message.chat.id, s_msgText, reply_markup=markup, parse_mode='HTML')
         log(message.from_user.id, "Product selection message sent")
-        bot.register_next_step_handler(msg, ifThisCorrectProduct)
+
         log(message.from_user.id, "Next step handler registered for product selection")
+        bot.register_next_step_handler(msg, ifThisCorrectProduct)
+
     except Exception as e:
         log(message.from_user.id, f"[ERROR] make_order(): {e}")
         bot.send_message(message.chat.id, "⚠ Сталася помилка при початку оформлення замовлення")
