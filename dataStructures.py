@@ -41,15 +41,13 @@ class orderItem:
         self.n_productCount = n_productCountIn
 
 class Order:
-    natr_currOrderNumber = 1
-
-    def __init__(self, cus_orderCustomerIn, noml_orderItemListIn):
+    def __init__(self, cus_orderCustomerIn, coritl_orderItemsListIn, n_orderCodeIn =0):
         self.cus_orderCustomer = cus_orderCustomerIn
-        self.noml_orderItemList = noml_orderItemListIn
+        self.coritl_orderItemsList = coritl_orderItemsListIn
         self.s_TTN = ""
         self.s_status = ""
-        self.date = datetime.now().strftime("%H:%M %d.%m.%Y")
-        self.natr_currOrderNumber += 1
+        self.s_date = datetime.now().strftime("%H:%M %d.%m.%Y")
+        self.n_orderCode = n_orderCodeIn
 
     def __str__(self):
         s_outString = f'''\t<b>ЗАМОВЛЕННЯ №{self.natr_currOrderNumber}</b>
@@ -61,7 +59,7 @@ class Order:
         🔢ТТН: {self.s_TTN}
         📩Статус: {self.s_status}\n
         📃Список покупок:\n'''
-        for item in self.noml_orderItemListIn:
+        for item in self.coritl_orderItemsList:
             s_outString += f'\t\t⚫{item.s_productArticle}:{item.s_productProperties} - {item.n_productCount}\n'
 
         return s_outString
