@@ -9,6 +9,8 @@ import sqlite3
 import random
 from datetime import datetime
 from log import *
+from sqlInteraction import *
+import OneCInteraction
 
 with open('config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
@@ -20,6 +22,8 @@ bot = telebot.TeleBot(szBotToken)
 scheduler_running = True
 
 currArt = ""
+
+oneCConn = OneCInteraction.Connection()
 
 # ================ SUPPORT FUNCTION ================
 
@@ -661,27 +665,36 @@ def start(message):
 def my_orders(message):
     try:
         log(message.from_user.id, '"My orders" button pressed')
-        orderList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (int(message.from_user.id),))
-        log(message.from_user.id, f"{len(orderList)} orders fetched from database")
-        if orderList:
-            szResultMessage = f'\t<b>🧾 МОЇ ЗАМОВЛЕННЯ</b>\n'
-            for order in orderList:
-                log(message.from_user.id, f"Processing order #{order['code']}")
-                szResultMessage += f'''
-<b>📦 Замовлення №{order["code"]}</b>
-    📅 <b>Дата:</b> {order["date"]}
-    📩 <b>Відправлено:</b> {"✅ Так" if order["ifSended"] else "❌ Ні"}
-        🔢 <b>ТТН:</b> {order["TTN"]}
-    🛍️ <b>Список покупок:</b>\n'''
-                orderTovarList = fetch_as_dicts("SELECT * FROM order_items WHERE code = ?", (int(order["code"]),))
-                log(message.from_user.id, f"{len(orderTovarList)} items found for order #{order['code']}")
-                for tovar in orderTovarList:
-                    szResultMessage += f'\t\t\t\t\t\t •🛒 <b>{tovar["art"]}</b>: {tovar["prop"]} — {tovar["count"]} шт.\n'
-            bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML')
-            log(message.from_user.id, "Order list sent to user")
-        else:
+        orderCodeList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (int(message.from_user.id),))
+        log(message.from_user.id, f"{len(orderCodeList)} ordersCode fetched from database")
+
+        if not orderCodeList:
             log(message.from_user.id, f"User has no orders")
             bot.send_message(message.chat.id, "Наразі у вас відсутні замовлення", parse_mode='HTML')
+            return
+
+        s_ResultMessage = f'\t<b>🧾 МОЇ ЗАМОВЛЕННЯ</b>\n'
+        for orderCode in orderCodeList.keys():
+            cor_currOrder = oneCConn.getOrderByCode(orderCode)
+
+            if not cor_currOrder:
+                log(message.from_user.id, f"Cannot find order with code {orderCode}")
+                continue
+
+            log(message.from_user.id, f"Processing order #{orderCode}")
+            s_ResultMessage += f'''
+<b>📦 Замовлення №{cor_currOrder.n_orderCode}</b>
+    📅 <b>Дата:</b> {cor_currOrder.s_date}
+    📩 <b>Відправлено:</b> {cor_currOrder.s_status}
+        🔢 <b>ТТН:</b> {cor_currOrder.s_TTN}
+    🛍️ <b>Список покупок:</b>\n'''
+            coritl_orderItemsList = cor_currOrder.coritl_orderItemsList
+            log(message.from_user.id, f"{len(coritl_orderItemsList)} items found for order #{cor_currOrder.n_orderCode}")
+            for orderItem in coritl_orderItemsList:
+                s_ResultMessage += f'\t\t\t\t\t\t •🛒 <b>{orderItem.s_productArticle}</b>: {orderItem.s_productProperties} — {orderItem.n_productCount} шт.\n'
+        bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML')
+        log(message.from_user.id, "Order list sent to user")
+
     except Exception as e:
         log(message.from_user.id, f"[ERROR] my_orders(): {e}")
         bot.send_message(message.chat.id, "Наразі у вас відсутні замовлення", parse_mode='HTML')
