@@ -10,25 +10,64 @@ import random
 from datetime import datetime
 from log import *
 from sqlInteraction import *
+import dataStructures
 import OneCInteraction
 
-with open('config.json', 'r', encoding='utf-8') as f:
-    config = json.load(f)
-    log_sys('Config.json read to config')
+# Load Config
+try:
+    with open('config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+        log_sys('Config.json read to config')
+except FileNotFoundError:
+    log_sys("Config file not found! Please create config.json")
+    exit()
 
 szBotToken = config["botToken"]
 bot = telebot.TeleBot(szBotToken)
 
 scheduler_running = True
 
-currArt = ""
+oneCConn = OneCInteraction.Connection() # Розкоментуйте, якщо є налаштована 1С
 
-oneCConn = OneCInteraction.Connection()
+# ================ SESSION MANAGEMENT ================
+# Замість глобальних змінних використовуємо словник сесій
+user_sessions = {}
+
+
+def get_user_session(user_id):
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {
+            "currArt": "",
+            "tempOrder": {
+                "customerID": user_id,
+                "date": "",
+                "ifSended": False,
+                "TTN": "",
+                "orderTovarList": []
+            },
+            "tempUser": {"id": 0, "PIB": "", "phone": "", "address": ""},
+            "currOrderCode": 0  # For admin usage logic within a session
+        }
+    return user_sessions[user_id]
+
+
+def reset_user_order(user_id):
+    if user_id in user_sessions:
+        user_sessions[user_id]["tempOrder"] = {
+            "customerID": user_id,
+            "date": "",
+            "ifSended": False,
+            "TTN": "",
+            "orderTovarList": []
+        }
+        user_sessions[user_id]["tempUser"] = {"id": 0, "PIB": "", "phone": "", "address": ""}
+
 
 # ================ SUPPORT FUNCTION ================
 
 def has_emoji(text: str) -> bool:
     return any(char in emoji.EMOJI_DATA for char in text)
+
 
 def isInt(a):
     try:
@@ -37,1089 +76,689 @@ def isInt(a):
     except ValueError:
         return False
 
+
 def ifThisCorrectProduct(message):
-    global currArt, tempOrder
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
 
-    log(message.from_user.id, "ifThisCorrectProduct called")
+    log(user_id, "ifThisCorrectProduct called")
 
-    if message.text in ["/start", "🏠️️На головну"]:
-        log(message.from_user.id, '"To main page" button pressed or "/start" command used')
-        tempOrder = {
-            "customerID": "",
-            "date": "",
-            "ifSended": False,
-            "TTN": "",
-            "orderTovarList": []
-        }
+    if message.text in ["/start", "🏠На головну"]:
+        log(user_id, '"To main page" button pressed')
+        reset_user_order(user_id)
         start(message)
         return
 
     found = False
 
-    if message.caption:
-        log(message.from_user.id, 'Forwarded message detected. Checking if the message is correct')
-        if message.caption.startswith("🔥"):
-            log(message.from_user.id, 'Message is correct. Getting data from forwarded message was started')
-            textList = message.caption.split("\n")
-            for text in textList:
-                if "Арт.: " in text:
-                    currArt = text.replace("Арт.: ", "").strip()
-                    log(message.from_user.id, f'Current article: {currArt}')
-                    log(message.from_user.id, 'Trying getting data from database')
-                    try:
-                        data = fetch_as_dicts('SELECT * FROM products WHERE art = ?', (currArt,))[0]
-                        data_prop = fetch_as_dicts('SELECT * FROM product_properties WHERE art = ?', (currArt,))
-                        found = True
-                        log(message.from_user.id, 'Data was successfully got')
-                    except Exception as e:
-                        log(message.from_user.id, f'[ERROR] Can`t find article {currArt} in database: {e}')
-                        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
-                                   types.KeyboardButton("🏠На головну"))
-                        bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний неможлива.",
-                                         reply_markup=markup)
-
-                    for i in data_prop:
-                        if i["availability"]>0:
-                            data["sizeList"].append(i["property"])
-                    if len(data_prop) == 0:
-                        log(message.from_user.id, 'List product propeties is empty. Running reCheckStatus')
-                        reCheckStatus(message)
-                        log(message.from_user.id, 'Rerunning current function')
-                        ifThisCorrectProduct(message)
-                    tempOrder["orderTovarList"].append({"art": currArt, "prop": "", "count": 0})
-                    log(message.from_user.id, 'Current article was added to tempOrder')
-
-                    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    row = []
-                    counter = 0
-                    for prop in data["sizeList"]:
-                        row.append(types.KeyboardButton(prop))
-                        counter += 1
-                        if counter % 3 == 0:
-                            markup.row(*row)
-                            row = []
-                    if row:
-                        markup.row(*row)
-                    log(message.from_user.id, 'Size buttons was created')
-                    msg = bot.send_message(message.chat.id, "📏Виберіть розмір", reply_markup=markup)
-                    bot.register_next_step_handler(msg, handle_prop_selection)
-                    return
-
+    # Визначаємо артикул
+    if message.caption and message.caption.startswith("🔥"):
+        log(user_id, 'Forwarded message detected.')
+        textList = message.caption.split("\n")
+        for text in textList:
+            if "Арт.: " in text:
+                session["currArt"] = text.replace("Арт.: ", "").strip()
+                break
     else:
-        log(message.from_user.id, 'Forwarded message not detected. Working in default mode')
-        currArt = message.text.strip()
-        log(message.from_user.id, f'Current article: {currArt}')
-        log(message.from_user.id, 'Trying getting data from database')
-        try:
-            data = fetch_as_dicts('SELECT * FROM products WHERE art = ?', (currArt,))[0]
-            data_prop = fetch_as_dicts('SELECT * FROM product_properties WHERE art = ?', (currArt,))
-            found = True
-            log(message.from_user.id, 'Data was successfully got')
-        except Exception as e:
-            log(message.from_user.id, f'[ERROR] Can`t find article {currArt} in database: {e}')
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
-                       types.KeyboardButton("🏠На головну"))
-            bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний неможлива.",
-                             reply_markup=markup)
+        session["currArt"] = message.text.strip()
 
-    if found:
-            data["availabilityForProperties"] = {}
-            data["priceForProperties"] = {}
-            for i in data_prop:
-                if i["availability"]>0:
-                    data["availabilityForProperties"][i["property"]] = i["availability"]
-                    data["priceForProperties"][i["property"]] = i["price"]
-            log(message.from_user.id, 'priceForProperties and availabilityForProperties was created')
-            log(message.from_user.id, 'Start forming message')
-            szResultMessage = formMessageText(data, message.from_user.id)
-            images = []
-            log(message.from_user.id, 'Trying to get images')
-            try:
-                if data.get("frontImage"):
-                    images.append(open(data["frontImage"], 'rb'))
-                    log(message.from_user.id, 'Front image was opened')
-                if data.get("backImage"):
-                    images.append(open(data["backImage"], 'rb'))
-                    log(message.from_user.id, 'Back image was opened')
-            except Exception as e:
-                log(message.from_user.id, f'[ERROR] Failed to get image for {currArt}: {e}')
+    currArt = session["currArt"]
+    log(user_id, f'Current article: {currArt}')
 
-            if images:
-                media = []
-                for i, img in enumerate(images):
-                    if i == 0:
-                        if szResultMessage != "NULL":
-                            media.append(types.InputMediaPhoto(img, caption=szResultMessage, parse_mode='HTML'))
-                        else:
-                            log(message.from_user.id, '[ERROR] Can`t send unformed message')
-                            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                            markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
-                                       types.KeyboardButton("🏠На головну"))
-                            bot.send_message(message.chat.id, "❌ Помилка: Помилка форматування тексту.",
-                                             reply_markup=markup)
-                            return
-                    else:
-                        media.append(types.InputMediaPhoto(img))
-                bot.send_media_group(message.chat.id, media)
-                log(message.from_user.id, 'Image was sent successfully')
-            else:
-                bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML')
-                log(message.from_user.id, 'Message was sent without images')
+    try:
+        data_list = fetch_as_dicts('SELECT * FROM products WHERE art = ?', (currArt,))
+        if not data_list:
+            raise Exception("Article not found")
 
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(types.KeyboardButton("✅Так"), types.KeyboardButton("❌Ні"))
-            msg = bot.send_message(message.chat.id, "Чи це та форма яку ви хочете замовити?", reply_markup=markup)
-            bot.register_next_step_handler(msg, handle_tovar_selection)
+        data = data_list[0]
+        data_prop = fetch_as_dicts('SELECT * FROM product_properties WHERE art = ?', (currArt,))
+        found = True
 
-    if not found:
-        log(message.from_user.id, f'[ERROR] Can`t find {currArt} in database')
+        # Додаємо списки розмірів
+        data["sizeList"] = []
+        data["availabilityForProperties"] = {}
+        data["priceForProperties"] = {}
+
+        for i in data_prop:
+            if i["availability"] > 0:
+                data["sizeList"].append(i["property"])
+                data["availabilityForProperties"][i["property"]] = i["availability"]
+                data["priceForProperties"][i["property"]] = i["price"]
+
+    except Exception as e:
+        log(user_id, f'[ERROR] Can`t find article {currArt}: {e}')
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-        bot.send_message(message.chat.id, "❌ Помилка: Артикул не знайдено.", reply_markup=markup)
+        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
+                   types.KeyboardButton("🏠На головну"))
+        bot.send_message(message.chat.id, "❌ Помилка: Товар не знайдено або збій бази даних.", reply_markup=markup)
+        return
+
+    # Якщо це переслане повідомлення - одразу пропонуємо розмір
+    if message.caption:
+        session["tempOrder"]["orderTovarList"].append({"art": currArt, "prop": "", "count": 0})
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row = []
+        for idx, prop in enumerate(data["sizeList"]):
+            row.append(types.KeyboardButton(prop))
+            if (idx + 1) % 3 == 0:
+                markup.row(*row)
+                row = []
+        if row: markup.row(*row)
+
+        msg = bot.send_message(message.chat.id, "📏Виберіть розмір", reply_markup=markup)
+        bot.register_next_step_handler(msg, handle_prop_selection)
+        return
+
+    # Якщо введено вручну - показуємо товар
+    if found:
+        szResultMessage = formMessageText(data, user_id)
+        images = []
+        try:
+            if data.get("frontImage") and os.path.exists(data["frontImage"]):
+                images.append(open(data["frontImage"], 'rb'))
+            if data.get("backImage") and os.path.exists(data["backImage"]):
+                images.append(open(data["backImage"], 'rb'))
+        except Exception as e:
+            log(user_id, f"Image loading error: {e}")
+
+        if images:
+            media = []
+            for i, img in enumerate(images):
+                caption = szResultMessage if i == 0 else None
+                media.append(types.InputMediaPhoto(img, caption=caption, parse_mode='HTML'))
+            bot.send_media_group(message.chat.id, media)
+        else:
+            bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML')
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton("✅Так"), types.KeyboardButton("❌Ні"))
+        msg = bot.send_message(message.chat.id, "Чи це та форма яку ви хочете замовити?", reply_markup=markup)
+        bot.register_next_step_handler(msg, handle_tovar_selection)
+
 
 def handle_tovar_selection(message):
-    global tempOrder, currArt
-
-    log(message.from_user.id, "handle_tovar_selection called")
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+    currArt = session["currArt"]
 
     if message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed or "/start" command used')
+        reset_user_order(user_id)
         start(message)
-        tempOrder = {
-            "customerID": "",
-            "date": "",
-            "ifSended": False,
-            "TTN": "",
-            "orderTovarList": []
-        }
         return
 
     if message.text == "✅Так":
-        log(message.from_user.id, f'Current article: {currArt}')
-        log(message.from_user.id, 'Trying getting data from database')
         try:
-            product_data = fetch_as_dicts("SELECT art FROM products WHERE art = ?", (currArt,))
-            if not product_data:
-                log(message.from_user.id, f'[ERROR] Can`t find article {currArt} in database')
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
-                           types.KeyboardButton("🏠На головну"))
-                bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний неможлива.",
-                                 reply_markup=markup)
-                return
-            data = product_data[0]
-            log(message.from_user.id, 'Data was successfully got')
-            data["availabilityForProperties"] = {}
-            log(message.from_user.id, 'Trying tempAvailabilityForProperties from database')
-            tempAvailabilityForProperties = fetch_as_dicts(
+            # Отримуємо доступні розміри з бази
+            data_prop = fetch_as_dicts(
                 "SELECT property, availability as count FROM product_properties WHERE art = ?",
                 (currArt,)
             )
-            log(message.from_user.id, 'tempAvailabilityForProperties was successfully got')
-        except Exception as e:
-            log(message.from_user.id, f'[ERROR] Can`t find article {currArt} in database: {e}')
-            tempOrder["customerID"] = ""
-            tempOrder["date"] = ""
+
+            session["tempOrder"]["orderTovarList"].append({"art": currArt, "prop": "", "count": 0})
+
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(
-                types.KeyboardButton("✉Зв'язатися з менеджером"),
-                types.KeyboardButton("🏠На головну")
-            )
-            bot.send_message(message.chat.id, "❌ Помилка: Артикул не знайдено.", reply_markup=markup)
-            return
+            row = []
+            for idx, prop in enumerate(data_prop):
+                if prop['count'] > 0:
+                    row.append(types.KeyboardButton(prop['property']))
+                    if len(row) == 3:
+                        markup.row(*row)
+                        row = []
+            if row: markup.row(*row)
 
-        tempOrder["orderTovarList"].append({"art": currArt, "prop": "", "count": 0})
-        log(message.from_user.id, 'Current article was added to tempOrder')
-
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        row = []
-        counter = 0
-
-        for prop in tempAvailabilityForProperties:
-            property_name = prop['property']
-            count = prop['count']
-            if count != 0:
-                row.append(types.KeyboardButton(property_name))
-                counter += 1
-                if counter % 3 == 0:
-                    markup.row(*row)
-                    row = []
-
-        if row:
-            markup.row(*row)
-
-        log(message.from_user.id, 'Size buttons was created')
-        msg = bot.send_message(message.chat.id, "Виберіть розмір", reply_markup=markup)
-        bot.register_next_step_handler(msg, handle_prop_selection)
-        return
+            msg = bot.send_message(message.chat.id, "Виберіть розмір", reply_markup=markup)
+            bot.register_next_step_handler(msg, handle_prop_selection)
+        except Exception as e:
+            log(user_id, f"Error selecting properties: {e}")
+            bot.send_message(message.chat.id, "Сталася помилка при виборі розміру.")
     else:
-        log(message.from_user.id, 'Running rechoosing article function')
         make_order(message)
 
-def handle_prop_selection(message):
-    global tempOrder, currArt
 
-    log(message.from_user.id, "handle_prop_selection called")
+def handle_prop_selection(message):
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+    currArt = session["currArt"]
 
     if message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed or "/start" command used')
-        tempOrder = {
-            "customerID": "",
-            "date": "",
-            "ifSended": False,
-            "TTN": "",
-            "orderTovarList": []
-        }
+        reset_user_order(user_id)
         start(message)
         return
 
     prop = message.text.strip()
-    if not tempOrder["orderTovarList"]:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-        bot.send_message(message.chat.id, "❌ Помилка: Список замовлень порожній.", reply_markup=markup)
-        log(message.from_user.id, f'[ERROR] tempOrder["orderTovarList"] is empty')
-        return
-
-    lastAddedTovar = tempOrder["orderTovarList"][-1]
-    targetArt = lastAddedTovar["art"]
-    isAlreadyAdded = False
-    currTovar = {}
-    currData = {}
-
-    log(message.from_user.id, 'Checking if product is already in orderTovarList')
-    for tovar in tempOrder["orderTovarList"]:
-        if tovar["art"] == targetArt and tovar["prop"] == prop:
-            log(message.from_user.id, f'{targetArt}:{prop} is already in orderTovarList')
-            isAlreadyAdded = True
-            currTovar = tovar
-
-    log(message.from_user.id, 'Trying getting data from database')
-    try:
-        currData = fetch_as_dicts("SELECT property, availability FROM product_properties WHERE art = ?", (currArt,))
-        log(message.from_user.id, 'Data was successfully got')
-        availability_dict = {item['property']: int(item['availability']) for item in currData}
-        log(message.from_user.id, 'Availability dictionary was created')
-    except Exception:
-        log(message.from_user.id, f'[ERROR] Can`t find {currArt} from database')
-        availability_dict = {}
-        log(message.from_user.id, 'Availability dictionary was deleted')
-
-    if availability_dict:
-        available_count = availability_dict.get(prop, 0)
-
-        if prop not in availability_dict:
-            log(message.from_user.id, f'[ERROR] Selected property "{prop}" not found in DB for art {currArt}')
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            counter = 0
-            row=[]
-            for property_name, count in availability_dict.items():
-                if count != 0:
-                    row.append(types.KeyboardButton(property_name))
-                    counter += 1
-                    if counter % 3 == 0:
-                        markup.row(*row)
-                        row = []
-            if row:
-                markup.row(*row)
-
-            markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-            msg = bot.send_message(message.chat.id,
-                             f"❌ Помилка: Обраний розмір <b>{prop}</b> не знайдено в базі. Спробуйте ще раз.",
-                             parse_mode='HTML', reply_markup=markup)
-            bot.register_next_step_handler(msg, handle_prop_selection)
-            return
-        if isAlreadyAdded:
-            if currTovar["count"] + 1 <= available_count:
-                currTovar["count"] += 1
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.add(types.KeyboardButton("✅Так"), types.KeyboardButton("❌Ні"))
-                log(message.from_user.id, f'{targetArt} {prop} count incremented')
-                msg = bot.send_message(message.chat.id, f"✅ Додано до замовлення: {targetArt}, розмір {prop}. Додати ще?", reply_markup=markup)
-                bot.register_next_step_handler(msg, handle_adding_tovar_to_order)
-            else:
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.add(types.KeyboardButton("✅Так"), types.KeyboardButton("❌Ні"))
-                log(message.from_user.id, f'{targetArt} {prop} не доступний у потрібній кількості')
-                del tempOrder["orderTovarList"][-1]
-                msg = bot.send_message(message.chat.id, f"Товар {targetArt} {prop} відсутній у потрібній кількості. Виберіть інший.", reply_markup=markup)
-                bot.register_next_step_handler(msg, handle_adding_tovar_to_order)
-        else:
-            if available_count > 0:
-                lastAddedTovar["prop"] = prop
-                lastAddedTovar["count"] = 1
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.add(types.KeyboardButton("Додати новий товар➕"), types.KeyboardButton("Продовжити➡"))
-                log(message.from_user.id, f'{targetArt} {prop} додано до замовлення')
-                msg = bot.send_message(message.chat.id, f"✅ Додано: {targetArt} {prop}. Бажаєте додати ще товар?", reply_markup=markup)
-                bot.register_next_step_handler(msg, handle_adding_tovar_to_order)
-            else:
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-                log(message.from_user.id, f'[ERROR] Товар {targetArt} {prop} не доступний')
-                bot.send_message(message.chat.id, "❌ Помилка: Вибір не наявного товару.", reply_markup=markup)
-    else:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-        log(message.from_user.id, f'[ERROR] Can`t find {prop} for {currArt} in database')
-        bot.send_message(message.chat.id, "❌ Помилка: Розмір не знайдено.", reply_markup=markup)
-
-def handle_adding_tovar_to_order(message):
-    global tempOrder
-
-    log(message.from_user.id, "handle_adding_tovar_to_order called")
-
-    if message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed')
-        tempOrder = {
-            "customerID": "",
-            "date": "",
-            "ifSended": False,
-            "TTN": "",
-            "orderTovarList": []
-        }
+    if not session["tempOrder"]["orderTovarList"]:
+        bot.send_message(message.chat.id, "Помилка: кошик порожній.")
         start(message)
         return
 
-    elif message.text == "Додати новий товар➕":
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        row = []
-        log(message.from_user.id, 'Trying getting data from database')
-        try:
-            DataList = fetch_as_dicts("SELECT * FROM products")
-            log(message.from_user.id, 'Data was successfully got')
-        except Exception as e:
-            log(message.from_user.id, f"[ERROR] Failed to fetch products: {e}")
-            DataList = []
+    current_item = session["tempOrder"]["orderTovarList"][-1]  # Редагуємо останній доданий
 
-        for idx, item in enumerate(DataList):
-            row.append(types.KeyboardButton(item["art"]))
-            if (idx + 1) % 3 == 0:
-                markup.row(*row)
-                row = []
-        if row:
-            markup.row(*row)
+    # Перевірка наявності в БД
+    avail_data = fetch_as_dicts(
+        "SELECT availability FROM product_properties WHERE art = ? AND property = ?",
+        (currArt, prop)
+    )
 
-        log(message.from_user.id, 'Articles button was created')
-        msgText = (
-            "🤔 <b>Оберіть товар</b> за артикулом або просто <b>перешліть</b> повідомлення з нашого каналу 📨\n\n"
-            "🆔 Нажміть на кнопку з відповідним артикулом\n\n\t\tабо\n\n"
-            "📲 Перешліть повідомлення прямо сюди — і я все оброблю автоматично!"
-        )
-        msg = bot.send_message(message.chat.id, msgText, reply_markup=markup, parse_mode="HTML")
-        bot.register_next_step_handler(msg, ifThisCorrectProduct)
+    if not avail_data:
+        bot.send_message(message.chat.id, f"Розмір {prop} не знайдено.")
+        return
 
+    available_in_db = int(avail_data[0]['availability'])
+
+    # Перевірка, чи ми вже додали цей товар раніше в це саме замовлення
+    already_ordered_count = 0
+    for item in session["tempOrder"]["orderTovarList"][:-1]:  # Всі крім поточного (який ще не заповнений)
+        if item["art"] == currArt and item["prop"] == prop:
+            already_ordered_count += item["count"]
+
+    if (already_ordered_count + 1) > available_in_db:
+        bot.send_message(message.chat.id, "На жаль, такої кількості немає в наявності.")
+        # Видаляємо пустий запис
+        session["tempOrder"]["orderTovarList"].pop()
+        make_order(message)
+        return
+
+    # Зберігаємо вибір
+    current_item["prop"] = prop
+    current_item["count"] = 1
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("Додати новий товар➕"), types.KeyboardButton("Продовжити➡"))
+
+    msg = bot.send_message(message.chat.id, f"✅ Додано: {currArt} {prop}. Бажаєте додати ще?", reply_markup=markup)
+    bot.register_next_step_handler(msg, handle_adding_tovar_to_order)
+
+
+def handle_adding_tovar_to_order(message):
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+
+    if message.text in ["/start", "🏠На головну"]:
+        reset_user_order(user_id)
+        start(message)
+        return
+
+    if message.text == "Додати новий товар➕":
+        make_order(message)
     else:
-        log(message.from_user.id, 'Trying getting data from database')
-        try:
-            user = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (message.from_user.id,))[0]
-            log(message.from_user.id, 'Data was successfully got')
-            order_code = SQLmake(
-                'INSERT INTO orders (customerID, date, ifSended, TTN) VALUES (?, ?, ?, ?)',
-                (tempOrder["customerID"], tempOrder["date"], False, "")
-            )
-            log(message.from_user.id, f'Order data was written to database. Order code - {order_code} was successfully got')
-            log(message.from_user.id, 'Trying write orderTovarList to database')
-            for i in tempOrder["orderTovarList"]:
-                order_code = SQLmake(
-                    'INSERT INTO order_items (code, art, prop, count) VALUES (?, ?, ?, ?)',
-                    (order_code, i["art"], i["prop"], i["count"]))
-                try:
-                    SQLmake("UPDATE product_properties SET availability = availability - ?  WHERE art = ?  AND property=?", (i["count"],i["art"], i["prop"]))
-                except Exception as e:
-                    log(message.from_user.id, f"[ERROR] Failed to update availability for {order_code}: {e}")
-            log(message.from_user.id, 'orderTovarList was written to database')
+        # Продовжити оформлення
+        # Перевіряємо чи юзер вже є в базі
+        user_db = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (user_id,))
 
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-            markup.add(types.KeyboardButton("🛒Мої замовлення"))
-            markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
+        session["tempOrder"]["date"] = datetime.now().strftime("%H:%M %d.%m.%Y")
 
-            szResultMessage = (
-                "✅<b>Замовлення відправлено на обробку.</b>\n\n"
-                "Щодо відправлення вам напишуть протягом дня.\n\n"
-                "<b>💛Дякуємо, що вибрали нас!💛</b>"
-            )
-
-            bot.send_message(message.chat.id, szResultMessage, reply_markup=markup, parse_mode='HTML')
-
-            try:
-                log(message.from_user.id, 'Trying send notification to manager')
-                adminChat = bot.get_chat(config["adminIDs"][0])
-                log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
-                username = bot.get_chat(message.from_user.id).username
-                user = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (message.from_user.id,))[0]
-                szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n\n'
-                szResultMessage += f'''<b>ЗАМОВЛЕННЯ №{order_code}</b>
-    📅Дата: {tempOrder["date"]}\n
-    🔗Користувач: <a href="https://t.me/{username}">{username}</a>
-        🙎‍♂️ПІБ: {user["PIB"]}
-        📞Номер телефону: {user["phone"]}
-        🏠Адреса: {user["address"]}\n
-    📃Список покупок:\n'''
-                for tovar in tempOrder["orderTovarList"]:
-                    szResultMessage += f'\t\t\t\t\t\t\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
-                bot.send_message(
-                    adminChat.id,
-                    szResultMessage,
-                    parse_mode='HTML'
-                )
-                log(message.from_user.id, "Notification was sent to manager")
-            except Exception as e:
-                adminChat = bot.get_chat(config["adminIDs"][0])
-                log(message.from_user.id, f"[ERROR] Can`t send notification about order to manager: {e}")
-                bot.send_message(
-                    adminChat.id,
-                    f"Через помилку не можу відправити сповіщення про нове замовлення. Перепровірте список замовлень. Користувач = {username}",
-                    parse_mode='HTML'
-                )
-            tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-            log(message.from_user.id, "tempOrder reset after saving")
-        except Exception as e:
-            log(message.from_user.id, f"[ERROR] Failed to save order: {e}")
+        if user_db:
+            # Юзер є, одразу зберігаємо замовлення
+            finalize_order(message, user_db[0])
+        else:
+            # Юзера немає, питаємо дані
             msg = bot.send_message(
                 message.chat.id,
-                "Давайте зберемо ваші дані для відправки. <b>Введіть ваше ПІБ:</b>",
+                "Давайте зберемо ваші дані. <b>Введіть ваше ПІБ:</b>",
                 parse_mode='HTML',
                 reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add(types.KeyboardButton("🏠На головну"))
             )
             bot.register_next_step_handler(msg, get_PIB)
 
+
 def get_PIB(message):
-    global tempUser, tempOrder
-    log(message.from_user.id, "get_PIB called")
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+
     if message.text in ["🏠На головну", "/start"]:
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        back_to_main(message)
+        reset_user_order(user_id)
+        start(message)
         return
 
     if not has_emoji(message.text):
-        tempUser["id"] = message.from_user.id
-        tempUser["PIB"] = message.text
+        session["tempUser"]["id"] = user_id
+        session["tempUser"]["PIB"] = message.text
         msg = bot.send_message(message.chat.id, "Введіть ваш номер телефону:", parse_mode='HTML')
         bot.register_next_step_handler(msg, get_phone)
     else:
-        msg = bot.send_message(message.chat.id, "Введіть ще раз ваше ПІБ без емодзі:", parse_mode='HTML')
+        msg = bot.send_message(message.chat.id, "ПІБ не може містити емодзі. Спробуйте ще раз:")
         bot.register_next_step_handler(msg, get_PIB)
 
+
 def get_phone(message):
-    global tempUser, tempOrder
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
 
-    log(message.from_user.id, "get_phone called")
     if message.text in ["🏠На головну", "/start"]:
-        log(message.from_user.id, '"To main page" button pressed')
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        back_to_main(message)
-        return
-
-    if has_emoji(message.text):
-        log(message.from_user.id, '[ERROR] Message with phone number has emoji. Asking to re-enter number')
-        msg = bot.send_message(message.chat.id, "Номер телефону введено неправильно. Введіть ваш номер ще раз, будь ласка:", parse_mode='HTML')
-        bot.register_next_step_handler(msg, get_phone)
+        reset_user_order(user_id)
+        start(message)
         return
 
     phone = message.text.strip()
-    log(message.from_user.id, 'Phone number was got')
     valid = False
 
-    if len(phone) == 10 and phone.startswith("0") and isInt(phone):
-        tempUser["phone"] = f"+38{phone}"
-        valid = True
-    elif len(phone) == 13 and phone.startswith("+") and isInt(phone[1:]):
-        tempUser["phone"] = phone
-        valid = True
-    elif len(phone) == 12 and phone.startswith("3") and isInt(phone):
-        tempUser["phone"] = f"+{phone}"
+    if len(phone) >= 10 and len(phone) <= 13 and isInt(phone.replace("+", "")):
+        session["tempUser"]["phone"] = phone
         valid = True
 
     if valid:
-        log(message.from_user.id, 'Phone number was succssefully read')
-        msg = bot.send_message(message.chat.id, "Введіть адресу відділення:", parse_mode='HTML')
+        msg = bot.send_message(message.chat.id, "Введіть адресу доставки (НП, Місто, Відділення):")
         bot.register_next_step_handler(msg, submit_data_colect)
     else:
-        log(message.from_user.id, '[ERROR] Phonr number is not valid. Asking to re-enter number')
-        msg = bot.send_message(message.chat.id, "Номер телефону введено неправильно. Спробуйте ще раз:", parse_mode='HTML')
+        msg = bot.send_message(message.chat.id, "Некоректний номер. Спробуйте ще раз:")
         bot.register_next_step_handler(msg, get_phone)
 
+
 def submit_data_colect(message):
-    global tempUser, tempOrder
     user_id = message.from_user.id
-    log(user_id, "submit_data_colect called")
+    session = get_user_session(user_id)
 
     if message.text == "🏠На головну":
-        log(user_id, '"To main page" button pressed')
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        log(user_id, "tempOrder and tempUser reset due to 'main page' command")
-        back_to_main(message)
+        reset_user_order(user_id)
+        start(message)
         return
 
-    if not has_emoji(message.text):
-        tempUser["address"] = message.text
-        log(user_id, f"Address received: {message.text}")
+    session["tempUser"]["address"] = message.text
 
-        try:
-            log(user_id, "Attempting to insert user into database")
+    # Зберігаємо юзера в БД
+    SQLmake(
+        'INSERT OR REPLACE INTO users (id, PIB, phone, address) VALUES (?, ?, ?, ?)',
+        (session["tempUser"]["id"], session["tempUser"]["PIB"], session["tempUser"]["phone"],
+         session["tempUser"]["address"])
+    )
+
+    finalize_order(message, session["tempUser"])
+
+
+def finalize_order(message, user_data):
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+    order_data = session["tempOrder"]
+
+    try:
+        # Створюємо замовлення
+        order_code = SQLmake(
+            'INSERT INTO orders (customerID, date, ifSended, TTN, status) VALUES (?, ?, ?, ?, ?)',
+            (user_id, order_data["date"], 0, "", "Нове")
+        )
+
+        # Записуємо товари і списуємо наявність
+        for item in order_data["orderTovarList"]:
             SQLmake(
-                'INSERT INTO users (id, PIB, phone, address) VALUES (?, ?, ?, ?)',
-                (tempUser["id"], tempUser["PIB"], tempUser["phone"], tempUser["address"])
+                'INSERT INTO order_items (code, art, prop, count) VALUES (?, ?, ?, ?)',
+                (order_code, item["art"], item["prop"], item["count"])
             )
-            log(user_id, "User successfully inserted into database")
-        except Exception as e:
-            log(user_id, f"[ERROR] Failed to insert user: {e}")
-
-        try:
-            log(user_id, "Attempting to insert order into database")
-            order_code = SQLmake(
-                'INSERT INTO orders (customerID, date, ifSended, TTN) VALUES (?, ?, ?, ?)',
-                (tempOrder["customerID"], tempOrder["date"], False, "")
+            SQLmake(
+                "UPDATE product_properties SET availability = availability - ? WHERE art = ? AND property = ?",
+                (item["count"], item["art"], item["prop"])
             )
-            log(user_id, f"Order successfully inserted with code {order_code}")
 
-            for i in tempOrder["orderTovarList"]:
-                log(user_id, f"Inserting order item: art={i['art']}, prop={i['prop']}, count={i['count']}")
-                order_code = SQLmake(
-                    'INSERT INTO order_items (code, art, prop, count) VALUES (?, ?, ?, ?)',
-                    (order_code, i["art"], i["prop"], i["count"])
-                )
-                try:
-                    SQLmake("UPDATE product_properties SET availability = availability - ?  WHERE art = ?  AND property=?", (i["count"],i["art"], i["prop"]))
-                except Exception as e:
-                    log(message.from_user.id, f"[ERROR] Failed to update availability for {order_code}: {e}")
-            log(user_id, "All order items successfully inserted")
+        # Прив'язка ID замовлення до юзера (для таблиці orderCodeToUserId, якщо вона використовується)
+        # Хоча customerID в orders вже є, але згідно вашої схеми:
+        SQLmake('INSERT INTO orderCodeToUserId (order_code, user_id) VALUES (?, ?)', (order_code, user_id))
 
-        except Exception as e:
-            log(user_id, f"[ERROR] Failed to insert order or items: {e}")
+        # Відправка юзеру
+        bot.send_message(message.chat.id, f"✅ Замовлення №{order_code} успішно створено! Менеджер зв'яжеться з вами.")
 
-        szResultMessage = (
-            "✅<b>Ваше замовлення відправлено на обробку.</b>\n\n"
-            "Ми зв'яжемося з вами щодо доставки протягом дня.\n\n"
-            "<b>💛Дякуємо, що вибрали нас!💛</b>"
-        )
+        # Повідомлення адміну
+        if config["adminIDs"]:
+            admin_msg = f"🆕 <b>Нове замовлення №{order_code}</b>\n" \
+                        f"👤 {user_data.get('PIB')} ({user_data.get('phone')})\n" \
+                        f"🏠 {user_data.get('address')}\n\n"
+            for item in order_data["orderTovarList"]:
+                admin_msg += f"🔸 {item['art']} ({item['prop']}) x{item['count']}\n"
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-        markup.add(types.KeyboardButton("🛒Мої замовлення"))
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-        log(user_id, "Sending confirmation message and resetting menu buttons")
-        bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
+            try:
+                bot.send_message(config["adminIDs"][0], admin_msg, parse_mode='HTML')
+            except Exception as e:
+                log_sys(f"Failed to send admin notification: {e}")
 
-        try:
-            log(message.from_user.id, 'Trying send notification to manager')
-            adminChat = bot.get_chat(config["adminIDs"][0])
-            log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
-            username = bot.get_chat(message.from_user.id).username
-            szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n'
-            szResultMessage += f'''<b>ЗАМОВЛЕННЯ №{order_code}</b>
-    📅Дата: {tempOrder["date"]}\n
-    🔗Користувач: <a href="https://t.me/{username}">{username}</a>
-        🙎‍♂️ПІБ: {tempUser["PIB"]}
-        📞Номер телефону: {tempUser["phone"]}
-        🏠Адреса: {tempUser["address"]}\n
-    📃Список покупок:\n'''
-            for tovar in tempOrder["orderTovarList"]:
-                szResultMessage += f'\t\t\t\t\t\t\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
-            bot.send_message(
-                    adminChat.id,
-                    szResultMessage,
-                    parse_mode='HTML'
-            )
-            log(message.from_user.id, "Notification was sent to manager")
-        except Exception as e:
-            adminChat = bot.get_chat(config["adminIDs"][0])
-            bot.send_message(
-            adminChat.id,
-            f"Через помилку не можу відправити сповіщення про нове замовлення. Перепровірте список замовлень. Користувач = {username}",
-            parse_mode='HTML'
-        )
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        log(user_id, "tempOrder and tempUser reset after saving")
-    else:
-        log(user_id, f"[ERROR] Address contains emoji: {message.text}")
-        msg = bot.send_message(message.chat.id, "Будь ласка, введіть адресу ще раз без емодзі:", parse_mode='HTML')
-        log(user_id, "Asking user to re-enter address without emoji")
-        bot.register_next_step_handler(msg, submit_data_colect)
+        reset_user_order(user_id)
+        start(message)
+
+    except Exception as e:
+        log(user_id, f"Order save error: {e}")
+        bot.send_message(message.chat.id, "Сталася помилка при збереженні замовлення. Спробуйте пізніше.")
+
 
 # ================ USER MESSAGE HANDLERS ================
 @bot.message_handler(commands=['start'])
 def start(message):
-    try:
-        log(message.from_user.id, '"/start" command received')
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-        markup.add(types.KeyboardButton("🛒Мої замовлення"))
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-        log(message.from_user.id, "Main menu buttons created")
-        bot.send_message(message.chat.id, "👋Вітаємо! Оберіть опцію:", reply_markup=markup)
-        log(message.from_user.id, "Main menu message sent")
-    except Exception as e:
-        log(message.from_user.id, f"[ERROR] start(): {e}")
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
+    markup.add(types.KeyboardButton("🛒Мої замовлення"))
+    markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
+    bot.send_message(message.chat.id, "👋Вітаємо! Оберіть опцію:", reply_markup=markup)
 
 
 @bot.message_handler(func=lambda message: message.text == "🛒Мої замовлення")
 def my_orders(message):
-    try:
-        log(message.from_user.id, '"My orders" button pressed')
-        orderCodeList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (int(message.from_user.id),))
-        log(message.from_user.id, f"{len(orderCodeList)} ordersCode fetched from database")
+    user_id = message.from_user.id
 
-        if not orderCodeList:
-            log(message.from_user.id, f"User has no orders")
-            bot.send_message(message.chat.id, "Наразі у вас відсутні замовлення", parse_mode='HTML')
-            return
+    # Створюємо об'єкт клієнта (як того очікує ваш метод _get_orders_by_customer)
+    # Потрібно, щоб у структурі Customer було поле s_customerTelegramId
+    customer = dataStructures.Customer(s_customerTelegramIdIn=user_id)
 
-        s_ResultMessage = f'\t<b>🧾 МОЇ ЗАМОВЛЕННЯ</b>\n'
-        for orderCode in orderCodeList.keys():
-            cor_currOrder = oneCConn.getOrderByCode(orderCode)
+    # Отримуємо замовлення безпосередньо з 1С
+    orders = one_c.getOrders(cus_orderCustomer=customer)
 
-            if not cor_currOrder:
-                log(message.from_user.id, f"Cannot find order with code {orderCode}")
-                continue
+    if not orders:
+        bot.send_message(message.chat.id, "У вас ще немає замовлень в базі 1С.")
+        return
 
-            log(message.from_user.id, f"Processing order #{orderCode}")
-            s_ResultMessage += f'''
-<b>📦 Замовлення №{cor_currOrder.n_orderCode}</b>
-    📅 <b>Дата:</b> {cor_currOrder.s_date}
-    📩 <b>Відправлено:</b> {cor_currOrder.s_status}
-        🔢 <b>ТТН:</b> {cor_currOrder.s_TTN}
-    🛍️ <b>Список покупок:</b>\n'''
-            coritl_orderItemsList = cor_currOrder.coritl_orderItemsList
-            log(message.from_user.id, f"{len(coritl_orderItemsList)} items found for order #{cor_currOrder.n_orderCode}")
-            for orderItem in coritl_orderItemsList:
-                s_ResultMessage += f'\t\t\t\t\t\t •🛒 <b>{orderItem.s_productArticle}</b>: {orderItem.s_productProperties} — {orderItem.n_productCount} шт.\n'
-        bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML')
-        log(message.from_user.id, "Order list sent to user")
+    text = "<b>🛒 Ваші замовлення з 1С:</b>\n\n"
+    # Показуємо останні 5 (якщо метод повертає список)
+    for order in orders[-5:]:
+        text += f"📦 <b>Замовлення №{order.n_orderCode}</b> ({order.s_date})\n"
+        text += f"Статус: <b>{order.s_status}</b>\n"
+        if order.s_TTN:
+            text += f"🚚 ТТН: <code>{order.s_TTN}</code>\n"
 
-    except Exception as e:
-        log(message.from_user.id, f"[ERROR] my_orders(): {e}")
-        bot.send_message(message.chat.id, "Наразі у вас відсутні замовлення", parse_mode='HTML')
+        text += "Товари:\n"
+        for item in order.noml_orderItemList:
+            # item — це об'єкт orderItem з вашого модуля dataStructures
+            text += f"-- {item.article} ({item.s_productProperties}) x{item.count}\n"
+        text += "\n"
+
+    bot.send_message(message.chat.id, text, parse_mode='HTML')
 
 
 @bot.message_handler(func=lambda message: message.text == "🛍️Зробити замовлення")
 def make_order(message):
     try:
-        log(message.from_user.id, '"Make order" button pressed')
+        # Показуємо товари, які активні (activeProductPool або products)
+        # Тут приклад з activeProductPool, як у вашому коді
+        products = fetch_as_dicts("SELECT product_article FROM activeProductPool WHERE show = 1")
 
-        sd_productArticlesList = fetch_as_dicts("SELECT * FROM activeProductPool WHERE show = 1")
-        log(message.from_user.id, f"{len(sd_productArticlesList)} products article loaded from database")
+        # Якщо пул пустий, беремо просто з products
+        if not products:
+            products = fetch_as_dicts("SELECT art as product_article FROM products LIMIT 30")
 
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         row = []
-        for idx, productArticle in enumerate(sd_productArticlesList):
-            row.append(types.KeyboardButton(productArticle))
+        for idx, item in enumerate(products):
+            row.append(types.KeyboardButton(item["product_article"]))
             if (idx + 1) % 3 == 0:
                 markup.row(*row)
                 row = []
-        if row:
-            markup.row(*row)
-        log(message.from_user.id, "Product buttons added to markup")
+        if row: markup.row(*row)
+        markup.add(types.KeyboardButton("🏠На головну"))
 
-        s_msgText = (
-            "🤔 <b>Оберіть товар</b> за артикулом або просто <b>перешліть</b> повідомлення з нашого каналу 📨\n\n"
-            "🆔 Нажміть на кнопку з відповідним артикулом\n\n\t\tабо\n\n"
-            "📲 Перешліть повідомлення прямо сюди — і я все оброблю автоматично!"
+        bot.send_message(
+            message.chat.id,
+            "Оберіть товар зі списку або надішліть код/перешліть пост з каналу:",
+            reply_markup=markup
         )
-        msg = bot.send_message(message.chat.id, s_msgText, reply_markup=markup, parse_mode='HTML')
-        log(message.from_user.id, "Product selection message sent")
-
-        log(message.from_user.id, "Next step handler registered for product selection")
-        bot.register_next_step_handler(msg, ifThisCorrectProduct)
-
+        bot.register_next_step_handler(message, ifThisCorrectProduct)
     except Exception as e:
-        log(message.from_user.id, f"[ERROR] make_order(): {e}")
-        bot.send_message(message.chat.id, "⚠ Сталася помилка при початку оформлення замовлення")
+        log_sys(f"make_order error: {e}")
 
 
 @bot.message_handler(func=lambda message: message.text == "✉Зв'язатися з менеджером")
 def contact_to_manager(message):
-    try:
-        log(message.from_user.id, '"Contact to manager" button pressed')
-        adminChat = bot.get_chat(config["adminIDs"][0])
-        username = bot.get_chat(message.from_user.id).username
-        log(message.from_user.id, f"User username resolved: {username}")
+    if not config["adminIDs"]:
+        bot.send_message(message.chat.id, "Налаштування менеджера відсутні.")
+        return
 
-        bot.send_message(
-            adminChat.id,
-            f'‼‼Запит на зворотній зв\'язок з користувачем <a href="https://t.me/{username}">{username}</a>‼‼',
-            parse_mode='HTML'
-        )
-        log(message.from_user.id, "Contact request sent to admin")
-
-        msg = (
-            "🧾 <b>Ваше звернення прийнято!</b>\n\n"
-            "Наш менеджер звʼяжеться з вами найближчим часом для уточнення деталей.\n"
-            "Якщо у вас є додаткові питання — не соромтеся написати напряму.\n\n"
-            f"📞 <b>Контакт менеджера:</b> 🧓 <a href=\"tg://user?id={config['adminIDs'][0]}\">Менеджер</a>\n\n"
-            "📦 Дякуємо, що обрали нас! Ми завжди готові допомогти 🤝"
-        )
-        bot.send_message(message.chat.id, msg, parse_mode='HTML')
-        log(message.from_user.id, "Confirmation message sent to user")
-    except Exception as e:
-        log(message.from_user.id, f"[ERROR] contact_to_manager(): {e}")
-        bot.send_message(message.chat.id, "⚠ Не вдалося звʼязатися з менеджером")
-
-
-@bot.message_handler(func=lambda message: message.text == "🏠На головну")
-def back_to_main(message):
-    try:
-        log(message.from_user.id, '"To main page" button pressed')
-        start(message)
-        log(message.from_user.id, "start() called from back_to_main")
-    except Exception as e:
-        log(message.from_user.id, f"[ERROR] back_to_main(): {e}")
-        bot.send_message(message.chat.id, "⚠ Не вдалося повернутись на головну сторінку")
-
+    username = message.from_user.username
+    msg = f"User @{username} (ID: {message.from_user.id}) ask for help."
+    bot.send_message(config["adminIDs"][0], msg)
+    bot.send_message(message.chat.id, "Менеджер отримав ваш запит і напише вам.")
 
 
 # ================ ADMIN COMMANDS ================
-@bot.message_handler(commands=['start_sending'])
-def start_sending(message):
-    global scheduler_running
-    if message.from_user.id in config["adminIDs"]:
-        scheduler_running = True
-        log_sys('Scheduler started by admin')
-        log(message.from_user.id, 'Command /start_sending used')
-        bot.send_message(message.chat.id, "Розсилка запущена🏃‍♀️")
 
 @bot.message_handler(commands=['stop_sending'])
 def stop_sending(message):
     global scheduler_running
+
+    # Перевірка, чи користувач є адміном
     if message.from_user.id in config["adminIDs"]:
         scheduler_running = False
-        log_sys('Scheduler stopped by admin')
-        log(message.from_user.id, 'Command /stop_sending used')
-        bot.send_message(message.chat.id, "Розсилка зупинена⛔")
+        log_sys(f'Scheduler stopped by admin {message.from_user.id}')
+        bot.send_message(message.chat.id, "⛔ <b>Розсилка зупинена.</b>", parse_mode='HTML')
+    else:
+        # Можна нічого не відповідати або написати, що немає прав
+        pass
 
+
+@bot.message_handler(commands=['start_sending'])
+def start_sending(message):
+    global scheduler_running
+
+    # Перевірка, чи користувач є адміном
+    if message.from_user.id in config["adminIDs"]:
+        scheduler_running = True
+        log_sys(f'Scheduler started by admin {message.from_user.id}')
+        bot.send_message(message.chat.id, "🏃‍♀️ <b>Розсилка відновлена.</b>", parse_mode='HTML')
 
 @bot.message_handler(commands=['orderlist'])
-def send_orderlist1(message): #зробити так щоб надсилало замовлення за поточну дату, а не всі
-     #задуматися над ти щоб зробити в database.db таблиці order і orderItems і звідтам підтягувати дані ( хотя через 1с має бути те саме по швидкості)(хз?)
-    if message.from_user.id in config["adminIDs"]:
-        log(message.from_user.id, 'Command /orderlist used')
-        s_ResultMessage = "📃Список замовлень:\n"
-        try:
-            cus_ordersCustomer = getCustomer(user_id=message.from_user.id)
-            corl_orderList = oneCConn.getOrders(cus_ordersCustomer)
-        except Exception as e:
-            corl_orderList = []
-            log(message.from_user.id, f'[ERROR] Failed to fetch orders: {e}')
+def send_orderlist1(message):
+    if message.from_user.id not in config["adminIDs"]: return
 
-        if corl_orderList:
-            for order in corl_orderList:
-                try:
-                    username = bot.get_chat(order["customerID"]).username
-                except:
-                    username = "Unknown"
-                ifSended = "Відправлено✅" if order["ifSended"] else "НЕ відправлено❌"
-                szResultMessage += f'{order["code"]}. <a href="tg://user?id={order["customerID"]}">{username}</a> : {ifSended}\n'
+    # Отримуємо всі активні замовлення
+    orders = fetch_as_dicts("SELECT * FROM orders ORDER BY code DESC LIMIT 20")
 
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    if not orders:
+        bot.send_message(message.chat.id, "Замовлень немає.")
+        return
+
+    text = "Список останніх замовлень:\n"
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    row = []
+
+    for idx, order in enumerate(orders):
+        status = "✅" if order['ifSended'] else "❌"
+        text += f"{order['code']}. ID: {order['customerID']} - {status}\n"
+        row.append(types.KeyboardButton(str(order['code'])))
+        if (idx + 1) % 4 == 0:
+            markup.row(*row)
             row = []
-            for idx, order in enumerate(orderList):
-                row.append(types.KeyboardButton(order["code"]))
-                if (idx + 1) % 3 == 0:
-                    markup.row(*row)
-                    row = []
-            if row:
-                markup.row(*row)
-            log(message.from_user.id, 'Order list buttons generated')
-            msg = bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
-            log(message.from_user.id, 'Order list message sent')
-            bot.register_next_step_handler(msg, send_orderlist2)
-        else:
-            log(message.from_user.id, 'No orders found')
-            bot.send_message(message.chat.id, "Наразі нема замовлень", parse_mode='HTML')
+    if row: markup.row(*row)
+    markup.add(types.KeyboardButton("🏠На головну"))
+
+    msg = bot.send_message(message.chat.id, text, reply_markup=markup)
+    bot.register_next_step_handler(msg, send_orderlist2)
 
 
 def send_orderlist2(message):
-    global currOrderCode
-    if message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed')
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+
+    if message.text == "🏠На головну":
         start(message)
         return
-    try:
-        log(message.from_user.id, f'Requested order #{message.text}')
-        order = fetch_as_dicts(f"SELECT * FROM orders WHERE code = {int(message.text)}")[0]
-        order["orderTovarList"] = fetch_as_dicts(f"SELECT * FROM order_items WHERE code = {int(order['code'])}")
-        currOrderCode = int(order['code'])
-        log(message.from_user.id, f'Order #{currOrderCode} details loaded')
 
-        currUser = fetch_as_dicts(f"SELECT * FROM users WHERE id = {order['customerID']}")[0]
-        username = bot.get_chat(order["customerID"]).username
+    if not isInt(message.text):
+        bot.send_message(message.chat.id, "Це не номер.")
+        return
 
-        szResultMessage = f'''\t<b>ЗАМОВЛЕННЯ №{order["code"]}</b>
-📅Дата: {order["date"]}\n
-🔗Користувач: <a href="tg://user?id={order["customerID"]}">{username}</a>
-    🙎‍♂️ПІБ: {currUser["PIB"]}
-    📞Номер телефону: {currUser["phone"]}
-    🏠Адреса: {currUser["address"]}\n
-🔢ТТН: {order["TTN"]}
-📩Відправлено: {"Так" if order["ifSended"] else "Ні"}\n
-📃Список покупок:\n'''
-        for tovar in order["orderTovarList"]:
-            szResultMessage += f'\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
+    order_code = int(message.text)
+    session["currOrderCode"] = order_code
 
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        if order["ifSended"]:
-            markup.add(types.KeyboardButton("Змінити ТТН"))
-        else:
-            markup.add(types.KeyboardButton("Додати ТТН"))
-        markup.add(types.KeyboardButton("⬅Назад"))
+    order = fetch_as_dicts("SELECT * FROM orders WHERE code = ?", (order_code,))
+    if not order:
+        bot.send_message(message.chat.id, "Замовлення не знайдено.")
+        return
+    order = order[0]
 
-        msg = bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
-        log(message.from_user.id, f'Detailed order #{currOrderCode} message sent')
-        bot.register_next_step_handler(msg, send_orderlist3)
-    except Exception as e:
-        log(message.from_user.id, f'[ERROR] Failed in send_orderlist2: {e}')
+    user = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (order['customerID'],))
+    user_info = user[0] if user else {'PIB': 'Unknown', 'phone': 'Unknown', 'address': 'Unknown'}
+
+    items = fetch_as_dicts("SELECT * FROM order_items WHERE code = ?", (order_code,))
+
+    info = f"Замовлення #{order_code}\nКлієнт: {user_info['PIB']}\nТел: {user_info['phone']}\nАдреса: {user_info['address']}\nТТН: {order['TTN']}\n\nТовари:\n"
+    for item in items:
+        info += f"- {item['art']} {item['prop']} x{item['count']}\n"
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("Додати ТТН"), types.KeyboardButton("🏠На головну"))
+
+    msg = bot.send_message(message.chat.id, info, reply_markup=markup)
+    bot.register_next_step_handler(msg, send_orderlist3)
 
 
 def send_orderlist3(message):
-    global currOrderCode
-    if message.text == "⬅Назад":
-        log(message.from_user.id, 'Back button pressed in order detail view')
-        send_orderlist1(message)
-    elif message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed')
-        start(message)
-        return
-    elif message.text in ["Додати ТТН", "Змінити ТТН"]:
-        log(message.from_user.id, 'Requesting TTN input')
-        msg = bot.send_message(message.chat.id, "🔢Введіть ТТН", parse_mode='HTML')
-        bot.register_next_step_handler(msg, add_TTN)
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
 
+    if message.text == "Додати ТТН":
+        msg = bot.send_message(message.chat.id, "Введіть номер ТТН:")
+        bot.register_next_step_handler(msg, add_TTN)
+    else:
+        start(message)
 
 
 def add_TTN(message):
-    if message.text in ["/start", "🏠На головну"]:
-        log(message.from_user.id, '"To main page" button pressed')
-        start(message)
-        return
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+    ttn = message.text
+
+    SQLmake("UPDATE orders SET TTN = ?, ifSended = 1, status = 'Відправлено' WHERE code = ?",
+            (ttn, session["currOrderCode"]))
+
+    # Спробувати повідомити клієнта
+    order = fetch_as_dicts("SELECT customerID FROM orders WHERE code = ?", (session["currOrderCode"],))[0]
     try:
-        log(message.from_user.id, f'Updating TTN for order #{currOrderCode} to "{message.text}"')
-        SQLmake("UPDATE orders SET TTN = ?, ifSended = ? WHERE code = ?", (message.text, 1, currOrderCode))
-        log(message.from_user.id, f'TTN updated successfully for order #{currOrderCode}')
-        send_orderlist1(message)
-    except Exception as e:
-        log(message.from_user.id, f'[ERROR] Failed to update TTN: {e}')
+        bot.send_message(order['customerID'], f"Ваше замовлення #{session['currOrderCode']} відправлено!\nТТН: {ttn}")
+    except:
+        pass
+
+    bot.send_message(message.chat.id, "ТТН збережено.")
+    start(message)
 
 
-@bot.message_handler(commands=['recheckstatus'])
-def reCheckStatus(message):
-    try:
-        log(message.from_user.id, 'Command /recheckstatus used')
-        DataList = fetch_as_dicts("SELECT code, frontImage, backImage FROM orders")
-        log(message.from_user.id, f'{len(DataList)} orders fetched for status recheck')
-
-        for data in DataList:
-            if len(data["frontImage"]) < 2 and len(data["backImage"]) < 2:
-                SQLmake("UPDATE orders SET active = 0 WHERE code = ?", (data['code'],))
-                log(message.from_user.id, f'Order #{data["code"]} marked inactive')
-            else:
-                SQLmake("UPDATE orders SET active = 1 WHERE code = ?", (data['code'],))
-                log(message.from_user.id, f'Order #{data["code"]} marked active')
-        bot.send_message(message.chat.id, "Статуси товарів були повторно перевірені")
-        log(message.from_user.id, 'Order statuses rechecked and message sent')
-    except Exception as e:
-        log_sys(f"[ERROR] Failed in reCheckStatus: {e}")
-
-# ================ SCHEDULER ================
-
+# ================ UTILS ================
 def formMessageText(data, user_id):
-    try:
-        name = data.get('name', '⚽ Форма')
-        art = data.get('art', '---')
-        log(user_id, f'Start forming message for article: {art}')
+    # (Функція формування тексту товару з вашого коду, трохи спрощена для надійності)
+    name = data.get('name', 'Товар')
+    art = data.get('art', '---')
+    price_str = "Уточнюйте"
 
-        about = data.get('about', '').strip()
-        if not about:
-            log(user_id, f'Description not found for {art}, auto-generating')
-            if "форма" in name.lower():
-                brand = ""
-                player = ""
-                for word in ["ronaldo","messi", "mbappe", "mudryk", "dovbyk"]:
-                    if word in name.lower():
-                        player = word.capitalize()
-                for word in ["nike", "adidas", "puma", "select", "umbro"]:
-                    if word in name.lower():
-                        brand = word.capitalize()
-                if brand and player:
-                    abouts = [f"👕 Дитяча футбольна форма {brand} {player} — комплект з футболки та шортів у стилі {player}.\n\t• Дихаюча тканина\n\t• Принт “{player}”\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                        f"⚽️ Комплект дитячої форми {brand} {player} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Яскравий дизайн у стилі {player}\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                        f"📦 У комплекті: футболка та шорти {brand} {player}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                elif brand:
-                    abouts = [f"👕 Дитяча футбольна форма {brand} — комплект з футболки та шортів.\n\t• Дихаюча тканина\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                         f"⚽️ Комплект дитячої форми {brand} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                         f"📦 У комплекті: футболка та шорти {brand}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                elif player:
-                    abouts = [f"👕 Дитяча футбольна форма у стилі {player}.\n\t• Дихаюча тканина\n\t• Принт “{player}”\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                             f"⚽️ Комплект дитячої форми {player} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Яскравий дизайн у стилі {player}\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                             f"📦 У комплекті: футболка та шорти {player}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                else:
-                    abouts = [(
-                        "◻️Матеріал: поліестер – дихаючий та приємний до тіла\n"
-                        "◻️Рукав: короткий\n"
-                        "◻️Колір: див. фото"
-                    )]
-                about=""
-                temp = abouts[0]
-                if len(abouts) == 1:
-                    about = abouts[0]
-                else:
-                    about = random.choice(abouts)
-                    while about == temp:
-                        about = random.choice(abouts)
+    if data.get("priceForProperties"):
+        vals = list(data["priceForProperties"].values())
+        if vals: price_str = f"{min(vals)} грн"
 
-        props = ""
-        for prop in list(data['availabilityForProperties'].keys()):
-            if prop.lower() != "null" and prop.strip():
-                if data['availabilityForProperties'][prop] != 0:
-                    props += f"⬛️ {prop.strip()}\n"
-        if not props:
-            log(user_id, f'{art} is unavailable')
-            props = "Немає в наявності"
-        else:
-            log(user_id, f'{art} availability parsed')
-
-        priceForProperties = data['priceForProperties']
-        price_list = list(set(priceForProperties.values()))
-        if len(price_list) == 1:
-            price_str = f"{price_list[0]} грн"
-        elif price_list:
-            try:
-                min_price = min([int(p) for p in price_list if str(p).isdigit()])
-                price_str = f"від {min_price} грн"
-            except:
-                log(user_id, f'{art} contains non-digit prices')
-                price_str = "Ціну уточнюйте"
-        else:
-            log(user_id, f'{art} has no prices for properties')
-            price_str = "Ціну уточнюйте"
-
-        hashtags = {"#форма"}
-        name_lower = name.lower()
-        for word, tag in [
-            ("ronaldo", "#ronaldo"),
-            ("messi", "#messi"),
-            ("mbappe", "#mbappe"),
-            ("mudryk", "#mudryk"),
-            ("dovbyk", "#dovbyk"),
-            ("nike", "#nike"),
-            ("adidas", "#adidas"),
-            ("puma", "#puma"),
-            ("select", "#select"),
-            ("umbro", "#umbro"),
-        ]:
-            if word in name_lower:
-                hashtags.add(tag)
-        hashtag_str = ' '.join(hashtags)
-        log(user_id, f'Hashtags set for {art}: {hashtag_str}')
-
-        szResultMessage = (
-            f"🔥<b>{name}</b>🔥\n\n"
-            f"Арт.: {art}\n\n"
-            f"{about}\n\n"
-            f"Доступні розміри:\n{props}\n"
-            f"💲 Ціна: <b>{price_str}</b> 💲\n\n"
-            f'Для замовлення пишіть - <a href="tg://user?id={bot.get_me().id}">Бот🤖</a>\n\n'
-            f"{hashtag_str}"
-        )
-        log(user_id, f'Message formed successfully for {art}')
-        return szResultMessage
-
-    except Exception as e:
-        log(user_id, f'[ERROR] Failed to form message for {data.get("art", "---")}: {e}')
-        return "NULL"
+    txt = f"🔥 <b>{name}</b>\nАрт: {art}\n\n"
+    txt += f"Розміри: {', '.join(data.get('sizeList', []))}\n"
+    txt += f"💰 Ціна: {price_str}"
+    return txt
 
 
 def sendMessage():
+    global config
+    import os
+
     try:
-        DataList = fetch_as_dicts("SELECT * FROM products")
-        log_sys(f'{len(DataList)} products fetched from database')
+        log_sys("Scheduler: Starting sendMessage routine (Full 1C integration)...")
 
-        for idx, data in enumerate(DataList):
-            if idx == config["LastSendedIndex"]:
-                art = data.get("art", "---")
-                if data.get('active', False):
-                    log_sys(f'Processing active product: {art}')
-                    items = fetch_as_dicts(f'SELECT * FROM product_properties WHERE art = ?', (art,))
-                    data['availabilityForProperties'] = {}
-                    data['priceForProperties'] = {}
-                    for item in items:
-                        data['availabilityForProperties'][item["property"]] = item['availability']
-                        data['priceForProperties'][item["property"]] = item['price']
-                    log_sys(f'Properties loaded for {art}')
+        with open('config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
 
-                    szResultMessage = formMessageText(data, 'system')
-                    images = []
+        start_index = config.get("LastSendedIndex", 0)
 
-                    try:
-                        if data.get("frontImage"):
-                            images.append(open(data["frontImage"], 'rb'))
-                            log_sys(f'Front image added for {art}')
-                        if data.get("backImage"):
-                            images.append(open(data["backImage"], 'rb'))
-                            log_sys(f'Back image added for {art}')
-                    except Exception as e:
-                        log_sys(f'[ERROR] Failed to open image for {art}: {e}')
+        # 1. Беремо ТІЛЬКИ артикули з локальної бази (картинки тепер з 1С)
+        query = "SELECT product_article FROM activeProductPool WHERE show = 1"
+        active_pool = fetch_as_dicts(query)
+        total_products = len(active_pool)
 
-                    if images:
-                        media = []
-                        for i, img in enumerate(images):
-                            if i == 0:
-                                media.append(types.InputMediaPhoto(img, caption=szResultMessage, parse_mode='HTML'))
-                            else:
-                                media.append(types.InputMediaPhoto(img))
-                        bot.send_media_group(config["channelID"], media)
-                        log_sys(f'Message with images sent for {art}')
-                    else:
-                        bot.send_message(config["channelID"], szResultMessage, parse_mode='HTML')
-                        log_sys(f'Message without images sent for {art}')
+        if total_products == 0:
+            log_sys("Scheduler: activeProductPool is empty.")
+            return
 
-                    config["LastSendedIndex"] += 1
-                    log_sys(f'LastSendedIndex updated to {config["LastSendedIndex"]}')
+        if start_index >= total_products:
+            start_index = 0
+            log_sys("Scheduler: Index reset to 0")
 
-                    with open("config.json", "w", encoding="utf-8") as f:
-                        json.dump(config, f, indent=4, ensure_ascii=False)
-                        log_sys(f'Config saved after sending {art}')
-                    return
-                else:
-                    log_sys(f'{art} is inactive, skipping')
-                    config["LastSendedIndex"] += 1
-                    with open("config.json", "w", encoding="utf-8") as f:
-                        json.dump(config, f, indent=4, ensure_ascii=False)
-                    sendMessage()
+        current_item = active_pool[start_index]
+        current_art = current_item["product_article"]
 
-        log_sys(f'All products processed. Restarting index')
-        config["LastSendedIndex"] = 0
+        log_sys(f"Scheduler: Fetching data for {current_art} from 1C...")
+
+        # 2. Отримуємо ВСІ дані (в т.ч. шляхи до збережених темп-картинок) з 1С
+        try:
+            if oneCConn.v8 is None:
+                oneCConn.initiateConnection()
+
+            product_data = oneCConn.getProductData(current_art)
+        except Exception as e:
+            log_sys(f"[ERROR] 1C Connection failed: {e}")
+            return
+
+        # Перевірка чи товар знайдений і чи є розміри
+        if not product_data or not product_data["sizeList"]:
+            log_sys(f"Scheduler: Product {current_art} not found/empty in 1C. Skipping.")
+            config["LastSendedIndex"] = start_index + 1
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+            return
+
+        # 3. Формуємо текст
+        szResultMessage = formMessageText(product_data, 'system')
+        if szResultMessage == "NULL":
+            log_sys(f"Scheduler: Failed to form text. Skipping.")
+            return
+
+        # 4. Підготовка зображень (шляхи тепер ведуть у папку temp_images)
+        images = []
+        media = []
+
+        # Список шляхів для подальшого видалення
+        paths_to_cleanup = []
+        if product_data.get("frontImage"): paths_to_cleanup.append(product_data["frontImage"])
+        if product_data.get("backImage"): paths_to_cleanup.append(product_data["backImage"])
+
+        try:
+            for path in paths_to_cleanup:
+                if os.path.exists(path):
+                    images.append(open(path, 'rb'))
+        except Exception as e:
+            log_sys(f"Scheduler: Image open error: {e}")
+
+        # 5. Відправка
+        channel_id = config.get("channelID")
+
+        if images:
+            for i, img in enumerate(images):
+                caption = szResultMessage if i == 0 else None
+                media.append(types.InputMediaPhoto(img, caption=caption, parse_mode='HTML'))
+            bot.send_media_group(channel_id, media)
+        else:
+            bot.send_message(channel_id, szResultMessage, parse_mode='HTML')
+
+        log_sys(f"Scheduler: Sent {current_art}.")
+
+        # 6. Закриття та видалення файлів
+        for img in images:
+            img.close()
+
+        # Видаляємо тимчасові файли з диска, щоб не забивати пам'ять
+        for path in paths_to_cleanup:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    log_sys(f"Deleted temp file: {path}")
+            except Exception as e:
+                log_sys(f"Error deleting temp file {path}: {e}")
+
+        # 7. Оновлення індексу
+        config["LastSendedIndex"] = start_index + 1
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
-        log_sys(f'LastSendedIndex reset to 0')
-        sendMessage()
 
     except Exception as e:
-        log_sys(f'[ERROR] Failed to send message: {e}')
+        log_sys(f"[ERROR] Scheduler routine failed: {e}")
 
-for hour in range(config["fromHour"], config["toHour"]):
-    time_str = f"{hour:02d}:00"
-    schedule.every().day.at(time_str).do(sendMessage)
 
 def run_scheduler():
     global scheduler_running
+    log_sys("Scheduler thread started.")
     while True:
+        # Виконуємо розсилку тільки якщо прапорець True
         if scheduler_running:
             schedule.run_pending()
-        time.sleep(config['timeToSleep'])
 
-scheduler_thread = threading.Thread(target=run_scheduler)
-scheduler_thread.start()
-
-try:
-    bot.infinity_polling()
-except Exception as e:
-    log_sys(f"[ERROR] Bot polling failed: {e}")
-    input("Press Enter to exit...")
+        # Затримка (береться з конфігу або за замовчуванням 60 секунд)
+        time.sleep(config.get('timeToSleep', 60))
+# Run
+if __name__ == '__main__':
+    log_sys("Bot started")
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        log_sys(f"CRITICAL ERROR: {e}")

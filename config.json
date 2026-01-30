@@ -1,13 +1,13 @@
 {
-    "pathToDatabase": "",
-    "botToken": "",
-    "channelID": "",
+    "pathToDatabase": "database.db",
+    "botToken": "7645512710:AAHTEcA90tE0VV7Y4P4kSLG8o75dQ1o9KiA",
+    "channelID": "@magazin2409",
     "LastSendedIndex": 0,
-    "adminIDs": [],
+    "adminIDs": [123456789],
     "fromHour": 10,
     "toHour": 18,
     "timeToSleep": 30,
     "connectionString": "Srvr=\"localhost\";Ref=\"work_base\";Usr=\"\";Pwd=\"\";",
-    "counterpartyBotCode": "",
+    "counterpartyBotCode": "000000001",
     "1cContragentCode": 0
 }

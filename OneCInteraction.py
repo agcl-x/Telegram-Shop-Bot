@@ -51,7 +51,140 @@ class Connection:
                 "GUID": str(self.v8.String(selection.Ref.UUID()))
             }
         return None
-    #написакти функцію getTodayOrders (обов'язково фільтр на контрагента бота)
+
+    def save_image_from_1c(self, storage_value, file_name):
+        """Зберігає картинку з ValueStorage 1С у тимчасовий файл"""
+        import os
+
+        # Створюємо папку temp, якщо немає
+        temp_dir = "temp_images"
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+
+        full_path = os.path.abspath(os.path.join(temp_dir, file_name))
+
+        try:
+            # В 1С метод .Get() отримує двійкові дані, .Write() записує їх на диск
+            # Якщо це COM-об'єкт BinaryData
+            if storage_value:
+                # Отримуємо BinaryData з ValueStorage
+                binary_data = storage_value.Get()
+                if binary_data:
+                    binary_data.Write(full_path)
+                    return full_path
+        except Exception as e:
+            print(f"Error saving image from 1C: {e}")
+            return None
+        return None
+
+    def getProductData(self, s_articleIn):
+        if not self.v8: return None
+
+        # 1. Отримуємо дані про товар (Ціна, Залишок, Посилання)
+        query = self.v8.NewObject("Query")
+        query.Text = """
+            ВЫБРАТЬ
+                Ном.Ссылка КАК Ссылка,
+                Ном.Наименование КАК Наименование,
+                Ном.Артикул КАК Артикул,
+                Ном.Описание КАК Описание,
+                ЕСТЬNULL(Цены.Цена, 0) КАК Цена,
+                ЕСТЬNULL(Остатки.ВНаличииОстаток, 0) КАК Остаток,
+                ЕСТЬNULL(Характеристики.Наименование, "") КАК Размер
+            ИЗ
+                Справочник.Номенклатура КАК Ном
+
+                ЛЕВОЕ СОЕДИНЕНИЕ Справочник.ХарактеристикиНоменклатуры КАК Характеристики
+                ПО Характеристики.Владелец = Ном.Ссылка
+
+                ЛЕВОЕ СОЕДИНЕНИЕ РегистрСведений.ЦеныНоменклатуры.СрезПоследних(&Период, ) КАК Цены
+                ПО Цены.Номенклатура = Ном.Ссылка
+                И (Цены.Характеристика = Характеристики.Ссылка ИЛИ Цены.Характеристика = ЗНАЧЕНИЕ(Справочник.ХарактеристикиНоменклатуры.ПустаяСсылка))
+
+                ЛЕВОЕ СОЕДИНЕНИЕ РегистрНакопления.ТоварыНаСкладах.Остатки(&Период, ) КАК Остатки
+                ПО Остатки.Номенклатура = Ном.Ссылка
+                И (Остатки.Характеристика = Характеристики.Ссылка ИЛИ Остатки.Характеристика = ЗНАЧЕНИЕ(Справочник.ХарактеристикиНоменклатуры.ПустаяСсылка))
+            ГДЕ
+                Ном.Артикул = &Артикул
+        """
+
+        query.SetParameter("Артикул", s_articleIn)
+        query.SetParameter("Период", self.v8.CurrentDate())
+
+        result = query.Execute()
+        if result.IsEmpty(): return None
+
+        selection = result.Select()
+
+        product_data = {
+            "name": "",
+            "art": s_articleIn,
+            "ref": None,  # Збережемо посилання для пошуку картинок
+            "about": "",
+            "availabilityForProperties": {},
+            "priceForProperties": {},
+            "sizeList": [],
+            "frontImage": None,
+            "backImage": None
+        }
+
+        while selection.Next():
+            if not product_data["name"]:
+                product_data["name"] = selection.Наименование
+                product_data["about"] = selection.Описание if hasattr(selection, "Описание") else ""
+                product_data["ref"] = selection.Ссылка  # Зберігаємо COM-об'єкт посилання
+
+            size = selection.Размер if selection.Размер else "Standard"
+            # Фільтруємо, щоб додавати тільки якщо є залишок
+            if float(selection.Остаток) > 0:
+                product_data["availabilityForProperties"][size] = int(selection.Остаток)
+                product_data["priceForProperties"][size] = int(selection.Цена)
+                product_data["sizeList"].append(size)
+
+        # 2. Отримуємо картинки (окремий запит для швидкодії)
+        if product_data["ref"]:
+            try:
+                # Запит до приєднаних файлів.
+                # УВАГА: Назва довідника може бути "НоменклатураПрисоединенныеФайлы" або просто "Файлы"
+                # Залежить від конфігурації. Тут приклад для BAS/УТ.
+                img_query = self.v8.NewObject("Query")
+                img_query.Text = """
+                    ВЫБРАТЬ ПЕРВЫЕ 2
+                        Файлы.Ссылка КАК Ссылка,
+                        Файлы.Расширение КАК Расширение,
+                        Файлы.ХранимыйФайл КАК ХранимыйФайл
+                    ИЗ
+                        Справочник.НоменклатураПрисоединенныеФайлы КАК Файлы
+                    ГДЕ
+                        Файлы.Владелец = &Владелец
+                        И НЕ Файлы.ПометкаУдаления
+                    УПОРЯДОЧИТЬ ПО
+                        Файлы.ДатаСоздания УБЫВ
+                """
+                img_query.SetParameter("Владелец", product_data["ref"])
+                img_res = img_query.Execute()
+
+                if not img_res.IsEmpty():
+                    img_sel = img_res.Select()
+                    counter = 0
+                    while img_sel.Next():
+                        # Генеруємо ім'я файлу
+                        ext = str(img_sel.Расширение)
+                        fname = f"{s_articleIn}_{counter}.{ext}"
+
+                        # Зберігаємо файл
+                        saved_path = self.save_image_from_1c(img_sel.ХранимыйФайл, fname)
+
+                        if saved_path:
+                            if counter == 0:
+                                product_data["frontImage"] = saved_path
+                            elif counter == 1:
+                                product_data["backImage"] = saved_path
+                        counter += 1
+            except Exception as e:
+                print(f"Error fetching images from 1C: {e}")
+
+        return product_data
     def pushOrder(self, cor_orderIn):
         if not self.v8:
             print("No connection to 1C")
