@@ -797,19 +797,20 @@ def stop_sending(message):
 
 
 @bot.message_handler(commands=['orderlist'])
-def send_orderlist1(message):
+def send_orderlist1(message): #зробити так щоб надсилало замовлення за поточну дату, а не всі
+     #задуматися над ти щоб зробити в database.db таблиці order і orderItems і звідтам підтягувати дані ( хотя через 1с має бути те саме по швидкості)(хз?)
     if message.from_user.id in config["adminIDs"]:
         log(message.from_user.id, 'Command /orderlist used')
-        szResultMessage = "📃Список замовлень:\n"
+        s_ResultMessage = "📃Список замовлень:\n"
         try:
-            orderList = fetch_as_dicts("SELECT * FROM orders")
-            log(message.from_user.id, f'{len(orderList)} orders fetched from database')
+            cus_ordersCustomer = getCustomer(user_id=message.from_user.id)
+            corl_orderList = oneCConn.getOrders(cus_ordersCustomer)
         except Exception as e:
-            orderList = []
+            corl_orderList = []
             log(message.from_user.id, f'[ERROR] Failed to fetch orders: {e}')
 
-        if orderList:
-            for order in orderList:
+        if corl_orderList:
+            for order in corl_orderList:
                 try:
                     username = bot.get_chat(order["customerID"]).username
                 except:

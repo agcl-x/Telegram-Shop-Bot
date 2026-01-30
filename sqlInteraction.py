@@ -1,6 +1,7 @@
 import sqlite3
 import json
 from log import *
+import dataStructures
 
 with open('config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
@@ -17,7 +18,12 @@ def fetch_as_dicts(query, params=()):
         log_sys("Data was successfully fetched")
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
-
+def getCustomer(user_id = ""):
+    if not user_id:
+        return None
+    customer_data = fetch_as_dicts(f"SELECT * FROM users WHERE id = ?", (user_id,))
+    newCustomer = dataStructures.Customer(user_id, customer_data["PIB"], customer_data["Phone"], customer_data["Address"])
+    return newCustomer
 def SQLmake(query, params=()):
     log_sys(f"Initiating connection to database( {config["pathToDatabase"]} )")
     with sqlite3.connect(config['pathToDatabase']) as conn:
