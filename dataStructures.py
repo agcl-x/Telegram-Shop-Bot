@@ -39,6 +39,8 @@ class orderItem:
         self.s_productArticle = s_productArticleIn
         self.s_productProperties = s_productPropertieIn
         self.n_productCount = n_productCountIn
+    def __dict__(self):
+        return {f'{self.s_productArticle}': self.s_productProperties}
 
 class Order:
     def __init__(self, cus_orderCustomerIn, coritl_orderItemsListIn, n_orderCodeIn =0):
