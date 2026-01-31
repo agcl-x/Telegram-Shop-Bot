@@ -263,92 +263,40 @@ def make_order4(message,newOrder):
         make_order1(message)
 
     else:
-        try:
-            oneCConn.pushOrder(newOrder)
-        except Exception as e:
-            pass
-
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-        markup.add(types.KeyboardButton("🛒Мої замовлення"))
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-
-        s_ResultMessage = (
-                "✅<b>Замовлення відправлено на обробку.</b>\n\n"
-                "Щодо відправлення вам напишуть протягом дня.\n\n"
-                "<b>💛Дякуємо, що вибрали нас!💛</b>"
-        )
-
-        bot.send_message(message.chat.id, s_ResultMessage, reply_markup=markup, parse_mode='HTML')
-
-        try:
-            log(message.from_user.id, 'Trying send notification to manager')
-            adminChat = bot.get_chat(config["adminIDs"][0])
-            log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
-                username = bot.get_chat(message.from_user.id).username
-                user = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (message.from_user.id,))[0]
-                szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n\n'
-                szResultMessage += f'''<b>ЗАМОВЛЕННЯ №{order_code}</b>
-    📅Дата: {tempOrder["date"]}\n
-    🔗Користувач: <a href="https://t.me/{username}">{username}</a>
-        🙎‍♂️ПІБ: {user["PIB"]}
-        📞Номер телефону: {user["phone"]}
-        🏠Адреса: {user["address"]}\n
-    📃Список покупок:\n'''
-                for tovar in tempOrder["orderTovarList"]:
-                    szResultMessage += f'\t\t\t\t\t\t\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
-                bot.send_message(
-                    adminChat.id,
-                    szResultMessage,
-                    parse_mode='HTML'
-                )
-                log(message.from_user.id, "Notification was sent to manager")
-            except Exception as e:
-                adminChat = bot.get_chat(config["adminIDs"][0])
-                log(message.from_user.id, f"[ERROR] Can`t send notification about order to manager: {e}")
-                bot.send_message(
-                    adminChat.id,
-                    f"Через помилку не можу відправити сповіщення про нове замовлення. Перепровірте список замовлень. Користувач = {username}",
-                    parse_mode='HTML'
-                )
-            tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-            log(message.from_user.id, "tempOrder reset after saving")
-        except Exception as e:
-            log(message.from_user.id, f"[ERROR] Failed to save order: {e}")
+        newOrder.cus_orderCustomer = dataStructures.Customer(message.from_user.id)
+        if len(newOrder.cus_orderCustomer.PIB) < 3:
             msg = bot.send_message(
                 message.chat.id,
                 "Давайте зберемо ваші дані для відправки. <b>Введіть ваше ПІБ:</b>",
                 parse_mode='HTML',
                 reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add(types.KeyboardButton("🏠На головну"))
             )
-            bot.register_next_step_handler(msg, get_PIB)
+            bot.register_next_step_handler(msg, get_PIB, newOrder)
 
-def get_PIB(message):
-    global tempUser, tempOrder
+        try:
+            oneCConn.pushOrder(newOrder)
+        except Exception as e:
+            pass
+
+        finish_data_colect(message, newOrder)
+
+def get_PIB(message, newOrder):
     log(message.from_user.id, "get_PIB called")
     if message.text in ["🏠На головну", "/start"]:
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
         back_to_main(message)
         return
 
     if not has_emoji(message.text):
-        tempUser["id"] = message.from_user.id
-        tempUser["PIB"] = message.text
+        newOrder.cus_orderCustomer.s_customerPIB = message.text
         msg = bot.send_message(message.chat.id, "Введіть ваш номер телефону:", parse_mode='HTML')
-        bot.register_next_step_handler(msg, get_phone)
+        bot.register_next_step_handler(msg, get_phone, newOrder)
     else:
         msg = bot.send_message(message.chat.id, "Введіть ще раз ваше ПІБ без емодзі:", parse_mode='HTML')
-        bot.register_next_step_handler(msg, get_PIB)
+        bot.register_next_step_handler(msg, get_PIB, newOrder)
 
-def get_phone(message):
-    global tempUser, tempOrder
-
-    log(message.from_user.id, "get_phone called")
+def get_phone(message, newOrder):
     if message.text in ["🏠На головну", "/start"]:
         log(message.from_user.id, '"To main page" button pressed')
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
         back_to_main(message)
         return
 
@@ -363,75 +311,57 @@ def get_phone(message):
     valid = False
 
     if len(phone) == 10 and phone.startswith("0") and isInt(phone):
-        tempUser["phone"] = f"+38{phone}"
+        newOrder.cus_orderCustomer.s_customerPhone = f"+38{phone}"
         valid = True
     elif len(phone) == 13 and phone.startswith("+") and isInt(phone[1:]):
-        tempUser["phone"] = phone
+        newOrder.cus_orderCustomer.s_customerPhone = phone
         valid = True
     elif len(phone) == 12 and phone.startswith("3") and isInt(phone):
-        tempUser["phone"] = f"+{phone}"
+        newOrder.cus_orderCustomer.s_customerPhone = f"+{phone}"
         valid = True
 
     if valid:
         log(message.from_user.id, 'Phone number was succssefully read')
         msg = bot.send_message(message.chat.id, "Введіть адресу відділення:", parse_mode='HTML')
-        bot.register_next_step_handler(msg, submit_data_colect)
+        bot.register_next_step_handler(msg, finish_data_colect, newOrder)
     else:
         log(message.from_user.id, '[ERROR] Phonr number is not valid. Asking to re-enter number')
         msg = bot.send_message(message.chat.id, "Номер телефону введено неправильно. Спробуйте ще раз:", parse_mode='HTML')
-        bot.register_next_step_handler(msg, get_phone)
+        bot.register_next_step_handler(msg, get_phone, newOrder)
 
-def submit_data_colect(message):
-    global tempUser, tempOrder
-    user_id = message.from_user.id
-    log(user_id, "submit_data_colect called")
+def finish_data_colect(message, newOrder):
+    log(message.from_user.id, "submit_data_colect called")
 
     if message.text == "🏠На головну":
-        log(user_id, '"To main page" button pressed')
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        log(user_id, "tempOrder and tempUser reset due to 'main page' command")
+        log(message.from_user.id, '"To main page" button pressed')
         back_to_main(message)
         return
 
     if not has_emoji(message.text):
-        tempUser["address"] = message.text
-        log(user_id, f"Address received: {message.text}")
+        newOrder.cus_orderCustomer.s_customerAddress = message.text
+        log(message.from_user.id, f"Address received: {message.text}")
 
         try:
-            log(user_id, "Attempting to insert user into database")
+            customer = newOrder.cus_orderCustomer
+            log(message.from_user.id, "Attempting to insert user into database")
             SQLmake(
                 'INSERT INTO users (id, PIB, phone, address) VALUES (?, ?, ?, ?)',
-                (tempUser["id"], tempUser["PIB"], tempUser["phone"], tempUser["address"])
+                (customer.s_customerTelegramId, customer.s_customerPIB, customer.s_customerPhone, customer.s_customerAddress)
             )
-            log(user_id, "User successfully inserted into database")
+            log(message.from_user.id, "User successfully inserted into database")
+            newOrder.n_orderCode = oneCConn.pushOrder(newOrder)
+            submit_order_making(message, newOrder)
         except Exception as e:
-            log(user_id, f"[ERROR] Failed to insert user: {e}")
+            log(message.from_user.id, f"[ERROR] Failed to insert user: {e}")
+    else:
+        log(message.from_user.id, f"[ERROR] Address contains emoji: {message.text}")
+        msg = bot.send_message(message.chat.id, "Будь ласка, введіть адресу ще раз без емодзі:", parse_mode='HTML')
+        log(message.from_user.id, "Asking user to re-enter address without emoji")
+        bot.register_next_step_handler(msg, finish_data_colect)
 
-        try:
-            log(user_id, "Attempting to insert order into database")
-            order_code = SQLmake(
-                'INSERT INTO orders (customerID, date, ifSended, TTN) VALUES (?, ?, ?, ?)',
-                (tempOrder["customerID"], tempOrder["date"], False, "")
-            )
-            log(user_id, f"Order successfully inserted with code {order_code}")
 
-            for i in tempOrder["orderTovarList"]:
-                log(user_id, f"Inserting order item: art={i['art']}, prop={i['prop']}, count={i['count']}")
-                order_code = SQLmake(
-                    'INSERT INTO order_items (code, art, prop, count) VALUES (?, ?, ?, ?)',
-                    (order_code, i["art"], i["prop"], i["count"])
-                )
-                try:
-                    SQLmake("UPDATE product_properties SET availability = availability - ?  WHERE art = ?  AND property=?", (i["count"],i["art"], i["prop"]))
-                except Exception as e:
-                    log(message.from_user.id, f"[ERROR] Failed to update availability for {order_code}: {e}")
-            log(user_id, "All order items successfully inserted")
-
-        except Exception as e:
-            log(user_id, f"[ERROR] Failed to insert order or items: {e}")
-
-        szResultMessage = (
+def submit_order_making(message, newOrder):
+        s_ResultMessage = (
             "✅<b>Ваше замовлення відправлено на обробку.</b>\n\n"
             "Ми зв'яжемося з вами щодо доставки протягом дня.\n\n"
             "<b>💛Дякуємо, що вибрали нас!💛</b>"
@@ -441,8 +371,8 @@ def submit_data_colect(message):
         markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
         markup.add(types.KeyboardButton("🛒Мої замовлення"))
         markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-        log(user_id, "Sending confirmation message and resetting menu buttons")
-        bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
+        log(message.from_user.id , "Sending confirmation message and resetting menu buttons")
+        bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML', reply_markup=markup)
 
         try:
             log(message.from_user.id, 'Trying send notification to manager')
@@ -450,15 +380,7 @@ def submit_data_colect(message):
             log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
             username = bot.get_chat(message.from_user.id).username
             szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n'
-            szResultMessage += f'''<b>ЗАМОВЛЕННЯ №{order_code}</b>
-    📅Дата: {tempOrder["date"]}\n
-    🔗Користувач: <a href="https://t.me/{username}">{username}</a>
-        🙎‍♂️ПІБ: {tempUser["PIB"]}
-        📞Номер телефону: {tempUser["phone"]}
-        🏠Адреса: {tempUser["address"]}\n
-    📃Список покупок:\n'''
-            for tovar in tempOrder["orderTovarList"]:
-                szResultMessage += f'\t\t\t\t\t\t\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
+            szResultMessage += str(newOrder)
             bot.send_message(
                     adminChat.id,
                     szResultMessage,
@@ -472,14 +394,7 @@ def submit_data_colect(message):
             f"Через помилку не можу відправити сповіщення про нове замовлення. Перепровірте список замовлень. Користувач = {username}",
             parse_mode='HTML'
         )
-        tempOrder = {"customerID": "", "date": "", "ifSended": False, "TTN": "", "orderTovarList": []}
-        tempUser = {"id": 0, "PIB": "", "phone": "", "address": ""}
-        log(user_id, "tempOrder and tempUser reset after saving")
-    else:
-        log(user_id, f"[ERROR] Address contains emoji: {message.text}")
-        msg = bot.send_message(message.chat.id, "Будь ласка, введіть адресу ще раз без емодзі:", parse_mode='HTML')
-        log(user_id, "Asking user to re-enter address without emoji")
-        bot.register_next_step_handler(msg, submit_data_colect)
+
 
 @bot.message_handler(func=lambda message: message.text == "✉Зв'язатися з менеджером")
 def contact_to_manager(message):
