@@ -46,13 +46,7 @@ def isInt(a):
 def start(message):
     try:
         log(message.from_user.id, '"/start" command received')
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-        markup.add(types.KeyboardButton("🛒Мої замовлення"))
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-        log(message.from_user.id, "Main menu buttons created")
-        bot.send_message(message.chat.id, "👋Вітаємо! Оберіть опцію:", reply_markup=markup)
-        log(message.from_user.id, "Main menu message sent")
+        mainMenuButtonsCreate(message, "👋Вітаємо! Оберіть опцію:")
     except Exception as e:
         log(message.from_user.id, f"[ERROR] start(): {e}")
 
@@ -98,6 +92,7 @@ def my_orders(message):
 
 @bot.message_handler(func=lambda message: message.text == "🛍️Зробити замовлення")
 def make_order1(message):
+    log(message.from_user.id, "make_order1 called")
     try:
         log(message.from_user.id, '"Make order" button pressed')
 
@@ -119,17 +114,17 @@ def make_order1(message):
         bot.send_message(message.chat.id, "⚠ Сталася помилка при початку оформлення замовлення")
 
 def make_order2(message, newOrder):
-
+    log(message.from_user.id, "make_order2 called")
     if message.text in ["/start", "🏠️️На головну"]:
         log(message.from_user.id, '"To main page" button pressed or "/start" command used')
-        start(message)
+        back_to_main(message)
         return
 
     articleMode = False
-    currProduct = None
+
 
     if message.caption:
-        log(message.from_user.id, 'Forwarded message detected. Checking if the message is correct')
+        log(message.from_user.id, 'Forwarded message detected. Getting product article.')
         textList = message.caption.split("\n")
         for text in textList:
             if "Арт.: " in text:
@@ -139,37 +134,46 @@ def make_order2(message, newOrder):
     else:
         log(message.from_user.id, 'Forwarded message not detected. Working in default mode')
         articleMode = True
+        log(message.from_user.id, 'ArticleMode bool switched to True.')
         currArt = message.text.strip()
 
+    currProduct = None
+
     try:
+        log(message.from_user.id, 'Trying to get nomenclature by article from 1C.')
         currProduct = oneCConn.getNomenclature(s_articleIn=currArt)
-        log(message.from_user.id, 'Data was successfully got')
+        log(message.from_user.id, 'Nomenclature was successfully got')
     except Exception as e:
-        log(message.from_user.id, f'[ERROR] Can`t find article {currArt} in database: {e}')
+        log(message.from_user.id, f'[ERROR] Can`t find Nomenclature( Article : {currArt} ) in 1c: {e}')
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
                    types.KeyboardButton("🏠На головну"))
-        bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний неможлива.",
+        bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний момент неможливе.",
                          reply_markup=markup)
+        return
 
 
     if currProduct:
         currProductProp = currProduct.sl_productProperties
         currProductCount = currProduct.nl_productCount
+        log(message.from_user.id, 'Creating newOrderItem.')
         newOrderItem = dataStructures.orderItem(s_productArticleIn=currProduct.s_productArticle)
+        log(message.from_user.id, 'Trying to add newOrderItem to orderItemList.')
         newOrder.coritl_orderItemsList.append(newOrderItem)
         if articleMode:
+            log(message.from_user.id, 'Switching to articleMode.')
             s_ResultMessage = formMessageText(currProduct, message.from_user.id)
             imgList = []
-            log(message.from_user.id, 'Trying to get images')
+            log(message.from_user.id, 'Trying to get nomenclature images from 1c.')
             try:
                 imgList = oneCConn.get_images(currProduct)
             except Exception as e:
-                pass
+                log(message.from_user.id, f'[ERROR] Images getting failure: {e}')
 
             if imgList:
                 media = []
                 for i, img in enumerate(imgList):
+                    log(message.from_user.id, 'Trying to add images to Telegram message.')
                     if i == 0:
                         if s_ResultMessage != "NULL":
                             media.append(types.InputMediaPhoto(img, caption=s_ResultMessage, parse_mode='HTML'))
@@ -184,18 +188,21 @@ def make_order2(message, newOrder):
                     else:
                         media.append(types.InputMediaPhoto(img))
                 bot.send_media_group(message.chat.id, media)
-                log(message.from_user.id, 'Image was sent successfully')
+                log(message.from_user.id, 'Telegram message was successfully sent')
             else:
                 bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML')
-                log(message.from_user.id, 'Message was sent without images')
+                log(message.from_user.id, 'Telegram message was sent without images')
 
         workingPropetiesPool = []
+        log(message.from_user.id, 'Creating workingPropetiesPool.')
         for i in range(len(currProductProp)):
             if currProductCount[i] > 0:
+                log(message.from_user.id, f'Property {currProductProp[i]} was added to workingPropetiesPool.')
                 workingPropetiesPool.append(currProductProp[i])
         if len(currProductProp) == 0:
             return
 
+        log(message.from_user.id, 'Adding properties from workingPropetiesPool to ReplyKeyboardMarkup.')
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         row = []
         counter = 0
@@ -213,12 +220,11 @@ def make_order2(message, newOrder):
         return
 
 def make_order3(message, newOrder, currProduct):
-
-    log(message.from_user.id, "handle_prop_selection called")
+    log(message.from_user.id, "make_order3 called")
 
     if message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed or "/start" command used')
-        start(message)
+        back_to_main(message)
         return
 
     prop = message.text.strip()
@@ -254,9 +260,11 @@ def make_order3(message, newOrder, currProduct):
 
 
 def make_order4(message,newOrder):
+    log(message.from_user.id, "make_order4 called")
+
     if message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
-        start(message)
+        back_to_main(message)
         return
 
     elif message.text == "Додати новий товар➕":
@@ -264,7 +272,9 @@ def make_order4(message,newOrder):
 
     else:
         newOrder.cus_orderCustomer = dataStructures.Customer(message.from_user.id)
+        log(message.from_user.id, "Checking user personal information")
         if len(newOrder.cus_orderCustomer.PIB) < 3:
+            log(message.from_user.id, "Starting personal information collecting")
             msg = bot.send_message(
                 message.chat.id,
                 "Давайте зберемо ваші дані для відправки. <b>Введіть ваше ПІБ:</b>",
@@ -282,7 +292,9 @@ def make_order4(message,newOrder):
 
 def get_PIB(message, newOrder):
     log(message.from_user.id, "get_PIB called")
+
     if message.text in ["🏠На головну", "/start"]:
+        log(message.from_user.id, '"To main page" button pressed')
         back_to_main(message)
         return
 
@@ -330,7 +342,7 @@ def get_phone(message, newOrder):
         bot.register_next_step_handler(msg, get_phone, newOrder)
 
 def finish_data_colect(message, newOrder):
-    log(message.from_user.id, "submit_data_colect called")
+    log(message.from_user.id, "finish_data_colect called")
 
     if message.text == "🏠На головну":
         log(message.from_user.id, '"To main page" button pressed')
@@ -339,62 +351,62 @@ def finish_data_colect(message, newOrder):
 
     if not has_emoji(message.text):
         newOrder.cus_orderCustomer.s_customerAddress = message.text
-        log(message.from_user.id, f"Address received: {message.text}")
-
-        try:
-            customer = newOrder.cus_orderCustomer
-            log(message.from_user.id, "Attempting to insert user into database")
-            SQLmake(
-                'INSERT INTO users (id, PIB, phone, address) VALUES (?, ?, ?, ?)',
-                (customer.s_customerTelegramId, customer.s_customerPIB, customer.s_customerPhone, customer.s_customerAddress)
-            )
-            log(message.from_user.id, "User successfully inserted into database")
-            newOrder.n_orderCode = oneCConn.pushOrder(newOrder)
-            submit_order_making(message, newOrder)
-        except Exception as e:
-            log(message.from_user.id, f"[ERROR] Failed to insert user: {e}")
+        log(message.from_user.id, f"Address received")
     else:
         log(message.from_user.id, f"[ERROR] Address contains emoji: {message.text}")
         msg = bot.send_message(message.chat.id, "Будь ласка, введіть адресу ще раз без емодзі:", parse_mode='HTML')
         log(message.from_user.id, "Asking user to re-enter address without emoji")
         bot.register_next_step_handler(msg, finish_data_colect)
 
+    try:
+        customer = newOrder.cus_orderCustomer
+        log(message.from_user.id, "Attempting to insert user into database")
+        SQLmake(
+            'INSERT INTO users (id, PIB, phone, address) VALUES (?, ?, ?, ?)',
+            (customer.s_customerTelegramId, customer.s_customerPIB, customer.s_customerPhone,
+             customer.s_customerAddress)
+        )
+        log(message.from_user.id, "User successfully inserted into database")
+        newOrder.n_orderCode = oneCConn.pushOrder(newOrder)
+        submit_order_making(message, newOrder)
+    except Exception as e:
+        log(message.from_user.id, f"[ERROR] Failed to insert user: {e}")
+
 
 def submit_order_making(message, newOrder):
-        s_ResultMessage = (
-            "✅<b>Ваше замовлення відправлено на обробку.</b>\n\n"
-            "Ми зв'яжемося з вами щодо доставки протягом дня.\n\n"
-            "<b>💛Дякуємо, що вибрали нас!💛</b>"
+    log(message.from_user.id, '"To main page" button pressed')
+
+    log(message.from_user.id, 'Forming confirmation message')
+    s_ResultMessage = (
+        "✅<b>Ваше замовлення відправлено на обробку.</b>\n\n"
+        "Ми зв'яжемося з вами щодо доставки протягом дня.\n\n"
+        "<b>💛Дякуємо, що вибрали нас!💛</b>"
+    )
+
+
+    log(message.from_user.id , "Sending confirmation message and resetting menu buttons")
+    mainMenuButtonsCreate(message, s_ResultMessage)
+
+    try:
+        log(message.from_user.id, 'Trying send notification to manager')
+        adminChat = bot.get_chat(config["adminIDs"][0])
+        log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
+        username = bot.get_chat(message.from_user.id).username
+        szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n'
+        szResultMessage += str(newOrder)
+        bot.send_message(
+            adminChat.id,
+            s_ResultMessage,
+            parse_mode='HTML'
         )
-
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
-        markup.add(types.KeyboardButton("🛒Мої замовлення"))
-        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
-        log(message.from_user.id , "Sending confirmation message and resetting menu buttons")
-        bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML', reply_markup=markup)
-
-        try:
-            log(message.from_user.id, 'Trying send notification to manager')
-            adminChat = bot.get_chat(config["adminIDs"][0])
-            log(message.from_user.id, f"Manager id: {config["adminIDs"][0]}")
-            username = bot.get_chat(message.from_user.id).username
-            szResultMessage = f'‼НОВЕ ЗАМОВЛЕННЯ ВІД КОРИСТУВАЧА <a href="https://t.me/{username}">{username}</a>‼\n'
-            szResultMessage += str(newOrder)
-            bot.send_message(
-                    adminChat.id,
-                    szResultMessage,
-                    parse_mode='HTML'
-            )
-            log(message.from_user.id, "Notification was sent to manager")
-        except Exception as e:
-            adminChat = bot.get_chat(config["adminIDs"][0])
-            bot.send_message(
+        log(message.from_user.id, "Notification was sent to manager")
+    except Exception as e:
+        adminChat = bot.get_chat(config["adminIDs"][0])
+        bot.send_message(
             adminChat.id,
             f"Через помилку не можу відправити сповіщення про нове замовлення. Перепровірте список замовлень. Користувач = {username}",
             parse_mode='HTML'
         )
-
 
 @bot.message_handler(func=lambda message: message.text == "✉Зв'язатися з менеджером")
 def contact_to_manager(message):
@@ -435,7 +447,16 @@ def back_to_main(message):
         log(message.from_user.id, f"[ERROR] back_to_main(): {e}")
         bot.send_message(message.chat.id, "⚠ Не вдалося повернутись на головну сторінку")
 
+def mainMenuButtonsCreate(message, messageText):
+    log(message.from_user.id, 'mainMenuButtonsCreate called')
 
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("🛍️Зробити замовлення"))
+    markup.add(types.KeyboardButton("🛒Мої замовлення"))
+    markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"))
+    log(message.from_user.id, "Main menu buttons created")
+    bot.send_message(message.chat.id, messageText, reply_markup=markup)
+    log(message.from_user.id, "Main menu message sent")
 
 # ================ ADMIN COMMANDS ================
 @bot.message_handler(commands=['start_sending'])
