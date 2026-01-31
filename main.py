@@ -55,7 +55,7 @@ def start(message):
 def my_orders(message):
     try:
         log(message.from_user.id, '"My orders" button pressed')
-        orderCodeList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (int(message.from_user.id),))
+        orderCodeList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (message.from_user.id,))
         log(message.from_user.id, f"{len(orderCodeList)} ordersCode fetched from database")
 
         if not orderCodeList:
@@ -65,10 +65,11 @@ def my_orders(message):
 
         s_ResultMessage = f'\t<b>🧾 МОЇ ЗАМОВЛЕННЯ</b>\n'
         for orderCode in orderCodeList.keys():
+            log(message.from_user.id, 'Trying to get order from 1C.')
             cor_currOrder = oneCConn.getOrderByCode(orderCode)
 
             if not cor_currOrder:
-                log(message.from_user.id, f"Cannot find order with code {orderCode}")
+                log(message.from_user.id, f"Cannot find order with code {orderCode}.")
                 continue
 
             log(message.from_user.id, f"Processing order #{orderCode}")
@@ -87,7 +88,7 @@ def my_orders(message):
 
     except Exception as e:
         log(message.from_user.id, f"[ERROR] my_orders(): {e}")
-        bot.send_message(message.chat.id, "Наразі у вас відсутні замовлення", parse_mode='HTML')
+        bot.send_message(message.chat.id, "⚠ Сталася помилка при спробі отримати список замовлень.", parse_mode='HTML')
 
 
 @bot.message_handler(func=lambda message: message.text == "🛍️Зробити замовлення")
