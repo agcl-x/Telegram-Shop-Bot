@@ -1,5 +1,5 @@
 from datetime import datetime
-
+from sqlInteraction import *
 
 class Nomenclature:
     def __init__(self, s_productNameIn, s_productArticleIn,
@@ -20,16 +20,17 @@ class Nomenclature:
         return s_outString
 
 class Customer:
-    def __init__(self, s_customerTelegramIdIn, s_customerPIBIn,
-                 s_customerPhoneIn, s_customerAddressIn):
+    def __init__(self, s_customerTelegramIdIn):
         self.s_customerTelegramId = s_customerTelegramIdIn
-        #Add check if user exists in database
-        #Use existing db to save customers
-        #Delete product and product properties tables from db
-
-        self.s_customerPIB = s_customerPIBIn
-        self.s_customerPhone = s_customerPhoneIn
-        self.s_customerAddress = s_customerAddressIn
+        try:
+            userDataDict = fetch_as_dicts("SELECT * FROM users WHERE id = ?", (s_customerTelegramIdIn,))
+            self.s_customerPIB = userDataDict["PIB"]
+            self.s_customerPhone = userDataDict["Phone"]
+            self.s_customerAddress = userDataDict["Address"]
+        except Exception as e:
+            self.s_customerPIB = ""
+            self.s_customerPhone = ""
+            self.s_customerAddress = ""
 
     def __str__(self):
         pass
