@@ -464,10 +464,10 @@ def mainMenuButtonsCreate(message, messageText):
 @bot.message_handler(commands=['start_sending'])
 def start_sending(message):
     global scheduler_running
+    log(message.from_user.id, 'Command /start_sending used')
     if message.from_user.id in config["adminIDs"]:
         scheduler_running = True
         log_sys('Scheduler started by admin')
-        log(message.from_user.id, 'Command /start_sending used')
         bot.send_message(message.chat.id, "Розсилка запущена🏃‍♀️")
 
 @bot.message_handler(commands=['stop_sending'])
