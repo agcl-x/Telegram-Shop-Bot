@@ -473,10 +473,10 @@ def start_sending(message):
 @bot.message_handler(commands=['stop_sending'])
 def stop_sending(message):
     global scheduler_running
+    log(message.from_user.id, 'Command /stop_sending used')
     if message.from_user.id in config["adminIDs"]:
         scheduler_running = False
         log_sys('Scheduler stopped by admin')
-        log(message.from_user.id, 'Command /stop_sending used')
         bot.send_message(message.chat.id, "Розсилка зупинена⛔")
 
 
