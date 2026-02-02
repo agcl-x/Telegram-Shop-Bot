@@ -26,6 +26,8 @@ scheduler_running = True
 
 currArt = ""
 sl_orderStatusList = ["Прийнято", "Відправлено", "Виконано", "Скасовано"]
+activeProductPool = []
+lastSendedArticle = ""
 
 oneCConn = OneCInteraction.Connection()
 
@@ -465,11 +467,16 @@ def mainMenuButtonsCreate(message, messageText):
 # ================ ADMIN COMMANDS ================
 @bot.message_handler(commands=['start_sending'])
 def start_sending(message):
-    global scheduler_running
+    global scheduler_running, activeProductPool , lastSendedArticle
     log(message.from_user.id, 'Command /start_sending used')
     if message.from_user.id in config["adminIDs"]:
         scheduler_running = True
         log_sys('Scheduler started by admin')
+        activeProductPoolDict = fetch_as_dicts("SELECT * FROM active_products WHERE show = ?", (1,))
+        tempActiveProductPool = [i["product_article"] for i in activeProductPoolDict]
+        if tempActiveProductPool:
+            activeProductPool = tempActiveProductPool
+            lastSendedArticle = ""
         bot.send_message(message.chat.id, "Розсилка запущена🏃‍♀️")
 
 @bot.message_handler(commands=['stop_sending'])
@@ -520,7 +527,7 @@ def reCheckShowFlag(message, article):
 
 @bot.message_handler(commands=['today_orders_list'])
 def send_orderlist1(message):
-
+    log(message.from_user.id, '/send_orderlist1 called')
 
     if message.from_user.id in config["adminIDs"]:
         s_ResultMessage = "📃Список замовлень:\n"
@@ -695,114 +702,55 @@ def reCheckStatus(message):
 
 def formMessageText(data, user_id):
     try:
-        name = data.get('name', '⚽ Форма')
-        art = data.get('art', '---')
-        log(user_id, f'Start forming message for article: {art}')
-
-        about = data.get('about', '').strip()
-        if not about:
-            log(user_id, f'Description not found for {art}, auto-generating')
-            if "форма" in name.lower():
-                brand = ""
-                player = ""
-                for word in ["ronaldo","messi", "mbappe", "mudryk", "dovbyk"]:
-                    if word in name.lower():
-                        player = word.capitalize()
-                for word in ["nike", "adidas", "puma", "select", "umbro"]:
-                    if word in name.lower():
-                        brand = word.capitalize()
-                if brand and player:
-                    abouts = [f"👕 Дитяча футбольна форма {brand} {player} — комплект з футболки та шортів у стилі {player}.\n\t• Дихаюча тканина\n\t• Принт “{player}”\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                        f"⚽️ Комплект дитячої форми {brand} {player} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Яскравий дизайн у стилі {player}\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                        f"📦 У комплекті: футболка та шорти {brand} {player}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                elif brand:
-                    abouts = [f"👕 Дитяча футбольна форма {brand} — комплект з футболки та шортів.\n\t• Дихаюча тканина\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                         f"⚽️ Комплект дитячої форми {brand} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                         f"📦 У комплекті: футболка та шорти {brand}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                elif player:
-                    abouts = [f"👕 Дитяча футбольна форма у стилі {player}.\n\t• Дихаюча тканина\n\t• Принт “{player}”\n\t• Підходить для тренувань, ігор і повсякденного носіння\nРекомендована для дітей віком 5–16 років.",
-                             f"⚽️ Комплект дитячої форми {player} — ідеальний вибір для активних дітей.\n\t• Високоякісний поліестер, приємний до тіла\n\t• Яскравий дизайн у стилі {player}\n\t• Футболка + шорти, еластичний пояс\nФорма не сковує рухів і легко переться.",
-                             f"📦 У комплекті: футболка та шорти {player}\n\t• Стильна репліка з іменем та номером легендарного гравця\n\t• Виготовлена з легкого, дихаючого матеріалу\n\t• Добре підходить для футбольних секцій і гри на вулиці\nДоступна в різних розмірах для дітей різного віку."]
-                else:
-                    abouts = [(
-                        "◻️Матеріал: поліестер – дихаючий та приємний до тіла\n"
-                        "◻️Рукав: короткий\n"
-                        "◻️Колір: див. фото"
-                    )]
-                about=""
-                temp = abouts[0]
-                if len(abouts) == 1:
-                    about = abouts[0]
-                else:
-                    about = random.choice(abouts)
-                    while about == temp:
-                        about = random.choice(abouts)
-
-        props = ""
-        for prop in list(data['availabilityForProperties'].keys()):
-            if prop.lower() != "null" and prop.strip():
-                if data['availabilityForProperties'][prop] != 0:
-                    props += f"⬛️ {prop.strip()}\n"
-        if not props:
-            log(user_id, f'{art} is unavailable')
-            props = "Немає в наявності"
-        else:
-            log(user_id, f'{art} availability parsed')
-
-        priceForProperties = data['priceForProperties']
-        price_list = list(set(priceForProperties.values()))
-        if len(price_list) == 1:
-            price_str = f"{price_list[0]} грн"
-        elif price_list:
-            try:
-                min_price = min([int(p) for p in price_list if str(p).isdigit()])
-                price_str = f"від {min_price} грн"
-            except:
-                log(user_id, f'{art} contains non-digit prices')
-                price_str = "Ціну уточнюйте"
-        else:
-            log(user_id, f'{art} has no prices for properties')
-            price_str = "Ціну уточнюйте"
-
-        hashtags = {"#форма"}
-        name_lower = name.lower()
-        for word, tag in [
-            ("ronaldo", "#ronaldo"),
-            ("messi", "#messi"),
-            ("mbappe", "#mbappe"),
-            ("mudryk", "#mudryk"),
-            ("dovbyk", "#dovbyk"),
-            ("nike", "#nike"),
-            ("adidas", "#adidas"),
-            ("puma", "#puma"),
-            ("select", "#select"),
-            ("umbro", "#umbro"),
-        ]:
-            if word in name_lower:
-                hashtags.add(tag)
-        hashtag_str = ' '.join(hashtags)
-        log(user_id, f'Hashtags set for {art}: {hashtag_str}')
-
-        szResultMessage = (
-            f"🔥<b>{name}</b>🔥\n\n"
-            f"Арт.: {art}\n\n"
-            f"{about}\n\n"
-            f"Доступні розміри:\n{props}\n"
-            f"💲 Ціна: <b>{price_str}</b> 💲\n\n"
-            f'Для замовлення пишіть - <a href="tg://user?id={bot.get_me().id}">Бот🤖</a>\n\n'
-            f"{hashtag_str}"
-        )
-        log(user_id, f'Message formed successfully for {art}')
-        return szResultMessage
-
-    except Exception as e:
-        log(user_id, f'[ERROR] Failed to form message for {data.get("art", "---")}: {e}')
+        nomenclature = oneCConn.getNomenclature(article)
+    except:
+        log(user_id, f'[ERROR] Failed to form message for {article}: {e}')
         return "NULL"
 
+    log(user_id, f'Start forming message for article: {article}')
+
+    s_properties = ""
+    propertiesList = nomenclature.sl_productProperties
+    propertiesPriceList = nomenclature.sl_productPrice
+    propertiesCountList = nomenclature.nl_productCount
+    for i in range(len(nomenclature.sl_productProperties)):
+        if propertiesList[i].lower() != "null" and propertiesList[i].strip():
+            if propertiesCountList[i] != 0:
+                s_properties += f"⬛️ {propertiesList[i].strip()}\n"
+
+    if not s_properties:
+        log(user_id, f'{article} is unavailable')
+        props = "Немає в наявності"
+    else:
+        log(user_id, f'{article} availability parsed')
+
+    if len(propertiesPriceList) == 1:
+        price_str = f"{propertiesPriceList[0]} грн"
+    elif propertiesPriceList:
+        try:
+            min_price = min([int(p) for p in propertiesPriceList if str(p).isdigit()])
+            price_str = f"від {min_price} грн"
+        except:
+            log(user_id, f'{article} contains non-digit prices')
+            price_str = "Ціну уточнюйте"
+    else:
+        log(user_id, f'{article} has no prices for properties')
+        price_str = "Ціну уточнюйте"
+
+    s_ResultMessage = (
+        f"🔥<b>{nomenclature.s_productName}</b>🔥\n\n"
+        f"Арт.: {article}\n\n"
+        f"{nomenclature.s_productDescription}\n\n"
+        f"Доступні розміри:\n{props}\n"
+        f"💲 Ціна: <b>{price_str}</b> 💲\n\n"
+        f'Для замовлення пишіть - <a href="tg://user?id={bot.get_me().id}">Бот🤖</a>\n\n'
+    )
+    log(user_id, f'Message formed successfully for {article}')
+    return s_ResultMessage
 
 def sendMessage():
     try:
-        DataList = fetch_as_dicts("SELECT * FROM products")
+
         log_sys(f'{len(DataList)} products fetched from database')
 
         for idx, data in enumerate(DataList):
