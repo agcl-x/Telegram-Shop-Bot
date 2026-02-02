@@ -700,12 +700,13 @@ def reCheckStatus(message):
 
 # ================ SCHEDULER ================
 
-def formMessageText(data, user_id):
+def formMessageText(article, user_id):
     try:
         nomenclature = oneCConn.getNomenclature(article)
     except:
         log(user_id, f'[ERROR] Failed to form message for {article}: {e}')
         return "NULL"
+
 
     log(user_id, f'Start forming message for article: {article}')
 
