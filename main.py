@@ -609,16 +609,16 @@ def send_orderlist3(message, currOrder):
     elif message.text == "Змінити статус":
         log(message.from_user.id, 'Requesting status input')
         msg = bot.send_message(message.chat.id, "🔢Введіть статус", parse_mode='HTML')
-        bot.register_next_step_handler(msg, change_order_status)
+        bot.register_next_step_handler(msg, change_order_status, currOrder)
 
     elif message.text in ["Додати ТТН", "Змінити ТТН"]:
         log(message.from_user.id, 'Requesting TTN input')
         msg = bot.send_message(message.chat.id, "🔢Введіть ТТН", parse_mode='HTML')
-        bot.register_next_step_handler(msg, add_TTN)
+        bot.register_next_step_handler(msg, add_TTN, currOrder)
 
-def change_order_status(message):
+def change_order_status(message, currOrder):
     pass
-def add_TTN(message):
+def add_TTN(message, currOrder):
     if message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
         start(message)
