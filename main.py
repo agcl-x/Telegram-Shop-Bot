@@ -467,16 +467,12 @@ def mainMenuButtonsCreate(message, messageText):
 # ================ ADMIN COMMANDS ================
 @bot.message_handler(commands=['start_sending'])
 def start_sending(message):
-    global scheduler_running, activeProductPool , lastSendedArticle
+    global scheduler_running, activeProductPool
     log(message.from_user.id, 'Command /start_sending used')
     if message.from_user.id in config["adminIDs"]:
         scheduler_running = True
         log_sys('Scheduler started by admin')
-        activeProductPoolDict = fetch_as_dicts("SELECT * FROM active_products WHERE show = ?", (1,))
-        tempActiveProductPool = [i["product_article"] for i in activeProductPoolDict]
-        if tempActiveProductPool:
-            activeProductPool = tempActiveProductPool
-            lastSendedArticle = ""
+        reCheckActiveProductPool(message)
         bot.send_message(message.chat.id, "Розсилка запущена🏃‍♀️")
 
 @bot.message_handler(commands=['stop_sending'])
@@ -683,28 +679,27 @@ def add_TTN(message, currOrder):
         log(message.from_user.id, f'[ERROR] Failed to update TTN: {e}')
 
 
-@bot.message_handler(commands=['recheckstatus'])
-def reCheckStatus(message):
-    log(message.from_user.id, '/reCheckStatus called')
-    try:
-        log(message.from_user.id, 'Command /recheckstatus used')
-        DataList = fetch_as_dicts("SELECT code, frontImage, backImage FROM orders")
-        log(message.from_user.id, f'{len(DataList)} orders fetched for status recheck')
-
-        for data in DataList:
-            if len(data["frontImage"]) < 2 and len(data["backImage"]) < 2:
-                SQLmake("UPDATE orders SET active = 0 WHERE code = ?", (data['code'],))
-                log(message.from_user.id, f'Order #{data["code"]} marked inactive')
-            else:
-                SQLmake("UPDATE orders SET active = 1 WHERE code = ?", (data['code'],))
-                log(message.from_user.id, f'Order #{data["code"]} marked active')
-        bot.send_message(message.chat.id, "Статуси товарів були повторно перевірені")
-        log(message.from_user.id, 'Order statuses rechecked and message sent')
-    except Exception as e:
-        log_sys(f"[ERROR] Failed in reCheckStatus: {e}")
+@bot.message_handler(commands=['recheck'])
+def reCheckActiveProductPool(message):
+    global activeProductPool
+    log(message.from_user.id, '/reCheckActiveProductPool called')
+    if message.from_user.id in config["adminIDs"]:
+        activeProductPoolDict = fetch_as_dicts("SELECT * FROM active_products WHERE show = ?", (1,))
+        tempActiveProductPool = [i["product_article"] for i in activeProductPoolDict]
+        if not tempActiveProductPool:
+            return
+        log(message.from_user.id, 'Recieved active product pool')
+        log(message.from_user.id, 'Updating show flags')
+        for article in activeProductPool:
+            showFlag = reCheckShowFlag(message, article)
+            if showFlag >= 0:
+                SQLmake("UPDATE activeProductPool SET show = ? WHERE product_article = ?", (showFlag, article))
+        activeProductPoolDict = fetch_as_dicts("SELECT * FROM active_products WHERE show = ?", (1,))
+        tempActiveProductPool = [i["product_article"] for i in activeProductPoolDict]
+        if tempActiveProductPool:
+            activeProductPool = tempActiveProductPool
 
 # ================ SCHEDULER ================
-
 def formMessageText(nomenclature, user_id):
     log(user_id, '/formMessageText called')
 
