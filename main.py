@@ -517,89 +517,88 @@ def reCheckShowFlag(message, article):
 
     return showFlag
 
-@bot.message_handler(commands=['orderlist'])
+@bot.message_handler(commands=['today_orders_list'])
 def send_orderlist1(message):
+
+
     if message.from_user.id in config["adminIDs"]:
-        log(message.from_user.id, 'Command /orderlist used')
-        szResultMessage = "📃Список замовлень:\n"
+        s_ResultMessage = "📃Список замовлень:\n"
         try:
-            orderList = fetch_as_dicts("SELECT * FROM orders")
-            log(message.from_user.id, f'{len(orderList)} orders fetched from database')
+            orderList = oneCConn.getTodayOrders()
+            log(message.from_user.id, f'{len(orderList)} orders fetched from 1C')
         except Exception as e:
-            orderList = []
             log(message.from_user.id, f'[ERROR] Failed to fetch orders: {e}')
+            bot.send_message(message.chat.id, "⚠️ Невдалось отрмати список сьогоднішніх замовлень.")
+            return
 
-        if orderList:
-            for order in orderList:
-                try:
-                    username = bot.get_chat(order["customerID"]).username
-                except:
-                    username = "Unknown"
-                ifSended = "Відправлено✅" if order["ifSended"] else "НЕ відправлено❌"
-                szResultMessage += f'{order["code"]}. <a href="tg://user?id={order["customerID"]}">{username}</a> : {ifSended}\n'
+        if not orderList:
+            log(message.from_user.id, f'Order list - empty')
+            bot.send_message(message.chat.id, "Замовлення відсутні!")
+            return
 
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            row = []
-            for idx, order in enumerate(orderList):
-                row.append(types.KeyboardButton(order["code"]))
-                if (idx + 1) % 3 == 0:
-                    markup.row(*row)
-                    row = []
-            if row:
+        for order in orderList:
+            try:
+                username = bot.get_chat(order.cus_orderCustomer.s_customerTelegramId)
+            except:
+                username = "Unknown"
+            s_ResultMessage += f'{order.n_orderCode}. <a href="tg://user?id={order.cus_orderCustomer.s_customerTelegramId}">{username}</a> : {order.s_status}\n'
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row = []
+        for idx, order in enumerate(orderList):
+            row.append(types.KeyboardButton(order["code"]))
+            if (idx + 1) % 3 == 0:
                 markup.row(*row)
-            log(message.from_user.id, 'Order list buttons generated')
-            msg = bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
-            log(message.from_user.id, 'Order list message sent')
-            bot.register_next_step_handler(msg, send_orderlist2)
-        else:
-            log(message.from_user.id, 'No orders found')
-            bot.send_message(message.chat.id, "Наразі нема замовлень", parse_mode='HTML')
-
+                row = []
+        if row:
+            markup.row(*row)
+        log(message.from_user.id, 'Order list buttons generated')
+        msg = bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML', reply_markup=markup)
+        log(message.from_user.id, 'Order list message sent')
+        bot.register_next_step_handler(msg, send_orderlist2)
 
 def send_orderlist2(message):
-    global currOrderCode
+    log(message.from_user.id, '/send_orderlist2 called')
+
     if message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
         start(message)
         return
+
+    log(message.from_user.id, f'Requesting order #{message.text}')
     try:
-        log(message.from_user.id, f'Requested order #{message.text}')
-        order = fetch_as_dicts(f"SELECT * FROM orders WHERE code = {int(message.text)}")[0]
-        order["orderTovarList"] = fetch_as_dicts(f"SELECT * FROM order_items WHERE code = {int(order['code'])}")
-        currOrderCode = int(order['code'])
-        log(message.from_user.id, f'Order #{currOrderCode} details loaded')
-
-        currUser = fetch_as_dicts(f"SELECT * FROM users WHERE id = {order['customerID']}")[0]
-        username = bot.get_chat(order["customerID"]).username
-
-        szResultMessage = f'''\t<b>ЗАМОВЛЕННЯ №{order["code"]}</b>
-📅Дата: {order["date"]}\n
-🔗Користувач: <a href="tg://user?id={order["customerID"]}">{username}</a>
-    🙎‍♂️ПІБ: {currUser["PIB"]}
-    📞Номер телефону: {currUser["phone"]}
-    🏠Адреса: {currUser["address"]}\n
-🔢ТТН: {order["TTN"]}
-📩Відправлено: {"Так" if order["ifSended"] else "Ні"}\n
-📃Список покупок:\n'''
-        for tovar in order["orderTovarList"]:
-            szResultMessage += f'\t\t⚫{tovar["art"]}:{tovar["prop"]} - {tovar["count"]}\n'
-
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        if order["ifSended"]:
-            markup.add(types.KeyboardButton("Змінити ТТН"))
-        else:
-            markup.add(types.KeyboardButton("Додати ТТН"))
-        markup.add(types.KeyboardButton("⬅Назад"))
-
-        msg = bot.send_message(message.chat.id, szResultMessage, parse_mode='HTML', reply_markup=markup)
-        log(message.from_user.id, f'Detailed order #{currOrderCode} message sent')
-        bot.register_next_step_handler(msg, send_orderlist3)
+        currOrder = oneCConn.getOrder(int(message.text))
     except Exception as e:
-        log(message.from_user.id, f'[ERROR] Failed in send_orderlist2: {e}')
+        log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
+        msg = bot.send_message(message.chat.id, "Замовлення не знайдено. Виберіть замовлення ще раз:")
+        bot.register_next_step_handler(msg, send_orderlist2)
+
+    if not currOrder:
+        log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
+        bot.send_message(message.chat.id, "Замовлення не знайдено.")
+
+    currOrderCode = currOrder.n_orderCode
+
+    log(message.from_user.id, f'Order #{currOrderCode} loaded')
+    s_ResultMessage = str(currOrder)
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("Змінити статус"))
+    if len(currOrder.TTN) != 0:
+        markup.add(types.KeyboardButton("Змінити ТТН"))
+    else:
+        markup.add(types.KeyboardButton("Додати ТТН"))
+    markup.add(types.KeyboardButton("⬅Назад"))
+
+    msg = bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML', reply_markup=markup)
+    log(message.from_user.id, f'Detailed order #{currOrderCode} message sent')
+    bot.register_next_step_handler(msg, send_orderlist3, currOrder)
 
 
-def send_orderlist3(message):
-    global currOrderCode
+
+def send_orderlist3(message, currOrder):
+    log(message.from_user.id, '/send_orderlist3 called')
+
     if message.text == "⬅Назад":
         log(message.from_user.id, 'Back button pressed in order detail view')
         send_orderlist1(message)
@@ -607,13 +606,18 @@ def send_orderlist3(message):
         log(message.from_user.id, '"To main page" button pressed')
         start(message)
         return
+    elif message.text == "Змінити статус":
+        log(message.from_user.id, 'Requesting status input')
+        msg = bot.send_message(message.chat.id, "🔢Введіть статус", parse_mode='HTML')
+        bot.register_next_step_handler(msg, change_order_status)
+
     elif message.text in ["Додати ТТН", "Змінити ТТН"]:
         log(message.from_user.id, 'Requesting TTN input')
         msg = bot.send_message(message.chat.id, "🔢Введіть ТТН", parse_mode='HTML')
         bot.register_next_step_handler(msg, add_TTN)
 
-
-
+def change_order_status(message):
+    pass
 def add_TTN(message):
     if message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
