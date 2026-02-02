@@ -700,7 +700,7 @@ def reCheckStatus(message):
 
 # ================ SCHEDULER ================
 
-def formMessageText(data, user_id):
+def formMessageText(article, user_id):
     try:
         nomenclature = oneCConn.getNomenclature(article)
     except:
