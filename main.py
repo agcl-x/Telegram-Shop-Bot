@@ -10,6 +10,7 @@ import random
 from datetime import datetime
 
 import dataStructures
+from dataStructures import Nomenclature
 from log import *
 from sqlInteraction import *
 import OneCInteraction
@@ -479,6 +480,42 @@ def stop_sending(message):
         log_sys('Scheduler stopped by admin')
         bot.send_message(message.chat.id, "Розсилка зупинена⛔")
 
+@bot.message_handler(commands=['add_article_to_pool'])
+def add_article_to_pool(message):
+    log(message.from_user.id, '/add_article_to_pool called')
+    if message.from_user.id in config["adminIDs"]:
+        msg = bot.send_message(message.chat.id, "Введіть артикул: ")
+        bot.register_next_step_handler(msg, submit_adding_article_to_pool)
+
+def submit_adding_article_to_pool(message):
+    log(message.from_user.id, '/submit_adding_article_to_pool called')
+    showFlag = reCheckShowFlag(message, message.text)
+    if showFlag >= 0:
+        SQLmake("INSERT INTO activeProductPool VALUES (?, ?)", (message.text, showFlag))
+        bot.send_message(message.chat.id, "Артикул додано")
+    else:
+        bot.send_message(message.chat.id, "⚠ Артикул не знайдено")
+
+
+def reCheckShowFlag(message, article):
+    if message:
+        log(message.from_user.id, '/reCheckShowFlag called')
+    else:
+        log_sys('/reCheckShowFlag called')
+    showFlag = 0
+    try:
+        tempProduct = oneCConn.getNomenclature(article)
+        for count in tempProduct.nl_productCount:
+            if count == 1:
+                showFlag = 1
+    except Exception as e:
+        showFlag = -1
+        if message:
+            log(message.from_user.id, f"[ERROR] reCheckShowFlag(): {e}")
+        else:
+            log_sys(f"[ERROR] reCheckShowFlag(): {e}")
+
+    return showFlag
 
 @bot.message_handler(commands=['orderlist'])
 def send_orderlist1(message):
