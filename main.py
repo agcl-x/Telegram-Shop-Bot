@@ -644,6 +644,7 @@ def change_order_status(message, currOrder):
     elif message.text in sl_orderStatusList:
         log(message.from_user.id, f'Order #{currOrder.n_orderCode} status updated')
         currOrder.s_status = message.text
+        oneCConn.updateOrderInfo(currOrder)  # add status TTN to 1c order comments
 
     else:
         log(message.from_user.id, 'Incorrect status input')
@@ -662,10 +663,11 @@ def add_TTN(message, currOrder):
         return
 
     try:
-        log(message.from_user.id, f'Updating TTN for order #{currOrderCode} to "{message.text}"')
-        SQLmake("UPDATE orders SET TTN = ?, ifSended = ? WHERE code = ?", (message.text, 1, currOrderCode))
-        log(message.from_user.id, f'TTN updated successfully for order #{currOrderCode}')
-        send_orderlist1(message)
+        log(message.from_user.id, f'Updating TTN for order #{currOrder.n_orderCode} to "{message.text}"')
+        currOrder.s_status = message.text
+        oneCConn.updateOrderInfo(currOrder) # add status TTN to 1c order comments
+        bot.send_message(message.chat.id, "ТТН успішно оновлено!", parse_mode='HTML')
+        send_orderlist2(message, currOrder)
     except Exception as e:
         log(message.from_user.id, f'[ERROR] Failed to update TTN: {e}')
 
