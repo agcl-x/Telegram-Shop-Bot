@@ -25,6 +25,7 @@ bot = telebot.TeleBot(szBotToken)
 scheduler_running = True
 
 currArt = ""
+sl_orderStatusList = ["Прийнято", "Відправлено", "Виконано", "Скасовано"]
 
 oneCConn = OneCInteraction.Connection()
 
@@ -546,7 +547,7 @@ def send_orderlist1(message):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         row = []
         for idx, order in enumerate(orderList):
-            row.append(types.KeyboardButton(order["code"]))
+            row.append(types.KeyboardButton(order.n_orderCode))
             if (idx + 1) % 3 == 0:
                 markup.row(*row)
                 row = []
@@ -555,9 +556,9 @@ def send_orderlist1(message):
         log(message.from_user.id, 'Order list buttons generated')
         msg = bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML', reply_markup=markup)
         log(message.from_user.id, 'Order list message sent')
-        bot.register_next_step_handler(msg, send_orderlist2)
+        bot.register_next_step_handler(msg, send_orderlist2, None)
 
-def send_orderlist2(message):
+def send_orderlist2(message, currOrder):
     log(message.from_user.id, '/send_orderlist2 called')
 
     if message.text in ["/start", "🏠На головну"]:
@@ -565,17 +566,17 @@ def send_orderlist2(message):
         start(message)
         return
 
-    log(message.from_user.id, f'Requesting order #{message.text}')
-    try:
-        currOrder = oneCConn.getOrder(int(message.text))
-    except Exception as e:
-        log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
-        msg = bot.send_message(message.chat.id, "Замовлення не знайдено. Виберіть замовлення ще раз:")
-        bot.register_next_step_handler(msg, send_orderlist2)
-
     if not currOrder:
-        log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
-        bot.send_message(message.chat.id, "Замовлення не знайдено.")
+        log(message.from_user.id, f'Requesting order #{message.text}')
+        try:
+            currOrder = oneCConn.getOrder(int(message.text))
+        except Exception as e:
+            log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
+            msg = bot.send_message(message.chat.id, "Замовлення не знайдено. Виберіть замовлення ще раз:")
+            bot.register_next_step_handler(msg, send_orderlist2)
+        if not currOrder:
+            log(message.from_user.id, f'[ERROR] Failed to get order: {e}')
+            bot.send_message(message.chat.id, "Замовлення не знайдено.")
 
     currOrderCode = currOrder.n_orderCode
 
@@ -602,13 +603,26 @@ def send_orderlist3(message, currOrder):
     if message.text == "⬅Назад":
         log(message.from_user.id, 'Back button pressed in order detail view')
         send_orderlist1(message)
+        return
+
     elif message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
         start(message)
         return
+
     elif message.text == "Змінити статус":
         log(message.from_user.id, 'Requesting status input')
         msg = bot.send_message(message.chat.id, "🔢Введіть статус", parse_mode='HTML')
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        row = []
+        for idx, status in enumerate(sl_orderStatusList):
+            row.append(types.KeyboardButton(status))
+            if (idx + 1) % 3 == 0:
+                markup.row(*row)
+                row = []
+        if row:
+            markup.row(*row)
+        markup.add(types.KeyboardButton("⬅Назад"))
         bot.register_next_step_handler(msg, change_order_status, currOrder)
 
     elif message.text in ["Додати ТТН", "Змінити ТТН"]:
@@ -617,12 +631,36 @@ def send_orderlist3(message, currOrder):
         bot.register_next_step_handler(msg, add_TTN, currOrder)
 
 def change_order_status(message, currOrder):
-    pass
-def add_TTN(message, currOrder):
-    if message.text in ["/start", "🏠На головну"]:
+    if message.text == "⬅Назад":
+        log(message.from_user.id, 'Back button pressed in order detail view')
+        send_orderlist2(message, currOrder)
+        return
+
+    elif message.text in ["/start", "🏠На головну"]:
         log(message.from_user.id, '"To main page" button pressed')
         start(message)
         return
+
+    elif message.text in sl_orderStatusList:
+        log(message.from_user.id, f'Order #{currOrder.n_orderCode} status updated')
+        currOrder.s_status = message.text
+
+    else:
+        log(message.from_user.id, 'Incorrect status input')
+        msg = bot.send_message(message.chat.id, "Введено не правильний статус. Спробуйте ще раз:", parse_mode='HTML')
+        bot.register_next_step_handler(msg, change_order_status, currOrder)
+
+def add_TTN(message, currOrder):
+    if message.text == "⬅Назад":
+        log(message.from_user.id, 'Back button pressed in order detail view')
+        send_orderlist2(message, currOrder)
+        return
+
+    elif message.text in ["/start", "🏠На головну"]:
+        log(message.from_user.id, '"To main page" button pressed')
+        start(message)
+        return
+
     try:
         log(message.from_user.id, f'Updating TTN for order #{currOrderCode} to "{message.text}"')
         SQLmake("UPDATE orders SET TTN = ?, ifSended = ? WHERE code = ?", (message.text, 1, currOrderCode))
