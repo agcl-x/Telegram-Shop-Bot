@@ -638,6 +638,8 @@ def send_orderlist3(message, currOrder):
         bot.register_next_step_handler(msg, add_TTN, currOrder)
 
 def change_order_status(message, currOrder):
+    log(message.from_user.id, '/change_order_status called')
+
     if message.text == "⬅Назад":
         log(message.from_user.id, 'Back button pressed in order detail view')
         send_orderlist2(message, currOrder)
@@ -659,6 +661,8 @@ def change_order_status(message, currOrder):
         bot.register_next_step_handler(msg, change_order_status, currOrder)
 
 def add_TTN(message, currOrder):
+    log(message.from_user.id, '/add_TTN called')
+
     if message.text == "⬅Назад":
         log(message.from_user.id, 'Back button pressed in order detail view')
         send_orderlist2(message, currOrder)
@@ -681,6 +685,7 @@ def add_TTN(message, currOrder):
 
 @bot.message_handler(commands=['recheckstatus'])
 def reCheckStatus(message):
+    log(message.from_user.id, '/reCheckStatus called')
     try:
         log(message.from_user.id, 'Command /recheckstatus used')
         DataList = fetch_as_dicts("SELECT code, frontImage, backImage FROM orders")
@@ -700,14 +705,10 @@ def reCheckStatus(message):
 
 # ================ SCHEDULER ================
 
-def formMessageText(article, user_id):
-    try:
-        nomenclature = oneCConn.getNomenclature(article)
-    except:
-        log(user_id, f'[ERROR] Failed to form message for {article}: {e}')
-        return "NULL"
+def formMessageText(nomenclature, user_id):
+    log(user_id, '/formMessageText called')
 
-
+    article = nomenclature.s_productArticle
     log(user_id, f'Start forming message for article: {article}')
 
     s_properties = ""
@@ -750,72 +751,48 @@ def formMessageText(article, user_id):
     return s_ResultMessage
 
 def sendMessage():
-    try:
+    log_sys('/change_order_status called')
 
-        log_sys(f'{len(DataList)} products fetched from database')
+    for index, article in enumerate(activeProductPool):
+        if article == config["LastSendedArticle"]:
+            tempIndex = index
+        elif index == tempIndex:
+            try:
+                nomenclature = oneCConn.getNomenclature(article)
+            except:
+                log_sys(f'[ERROR] Failed to form message for {article}: {e}')
+                return
+            log_sys(f'Processing active product: {article}')
+            s_ResultMessage = formMessageText(nomenclature, 'system')
+            try:
+                imgList = oneCConn.get_images(nomenclature)
+            except Exception as e:
+                log_sys(f'[ERROR] Images getting failure: {e}')
 
-        for idx, data in enumerate(DataList):
-            if idx == config["LastSendedIndex"]:
-                art = data.get("art", "---")
-                if data.get('active', False):
-                    log_sys(f'Processing active product: {art}')
-                    items = fetch_as_dicts(f'SELECT * FROM product_properties WHERE art = ?', (art,))
-                    data['availabilityForProperties'] = {}
-                    data['priceForProperties'] = {}
-                    for item in items:
-                        data['availabilityForProperties'][item["property"]] = item['availability']
-                        data['priceForProperties'][item["property"]] = item['price']
-                    log_sys(f'Properties loaded for {art}')
-
-                    szResultMessage = formMessageText(data, 'system')
-                    images = []
-
-                    try:
-                        if data.get("frontImage"):
-                            images.append(open(data["frontImage"], 'rb'))
-                            log_sys(f'Front image added for {art}')
-                        if data.get("backImage"):
-                            images.append(open(data["backImage"], 'rb'))
-                            log_sys(f'Back image added for {art}')
-                    except Exception as e:
-                        log_sys(f'[ERROR] Failed to open image for {art}: {e}')
-
-                    if images:
-                        media = []
-                        for i, img in enumerate(images):
-                            if i == 0:
-                                media.append(types.InputMediaPhoto(img, caption=szResultMessage, parse_mode='HTML'))
-                            else:
-                                media.append(types.InputMediaPhoto(img))
-                        bot.send_media_group(config["channelID"], media)
-                        log_sys(f'Message with images sent for {art}')
+            if imgList:
+                media = []
+                for i, img in enumerate(imgList):
+                    if i == 0:
+                        media.append(types.InputMediaPhoto(img, caption=s_ResultMessage, parse_mode='HTML'))
                     else:
-                        bot.send_message(config["channelID"], szResultMessage, parse_mode='HTML')
-                        log_sys(f'Message without images sent for {art}')
+                        media.append(types.InputMediaPhoto(img))
+                bot.send_media_group(config["channelID"], media)
+                log_sys(f'Message with images sent for {article}')
+            else:
+                bot.send_message(config["channelID"], s_ResultMessage, parse_mode='HTML')
+                log_sys(f'Message without images sent for {article}')
+            config['LastSendedArticle'] = article
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+                log_sys(f'Config saved after sending {article}')
+            return
 
-                    config["LastSendedIndex"] += 1
-                    log_sys(f'LastSendedIndex updated to {config["LastSendedIndex"]}')
-
-                    with open("config.json", "w", encoding="utf-8") as f:
-                        json.dump(config, f, indent=4, ensure_ascii=False)
-                        log_sys(f'Config saved after sending {art}')
-                    return
-                else:
-                    log_sys(f'{art} is inactive, skipping')
-                    config["LastSendedIndex"] += 1
-                    with open("config.json", "w", encoding="utf-8") as f:
-                        json.dump(config, f, indent=4, ensure_ascii=False)
-                    sendMessage()
-
-        log_sys(f'All products processed. Restarting index')
-        config["LastSendedIndex"] = 0
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-        log_sys(f'LastSendedIndex reset to 0')
-        sendMessage()
-
-    except Exception as e:
-        log_sys(f'[ERROR] Failed to send message: {e}')
+        elif index == len(activeProductPool)-1:
+            log_sys(f'All products processed. Restarting index')
+            config['LastSendedArticle'] = activeProductPool[0]
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+                log_sys(f'Config saved after sending {article}')
 
 for hour in range(config["fromHour"], config["toHour"]):
     time_str = f"{hour:02d}:00"
