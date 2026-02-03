@@ -59,7 +59,7 @@ def start(message):
 def my_orders(message):
     try:
         log(message.from_user.id, '"My orders" button pressed')
-        orderCodeList = fetch_as_dicts("SELECT * FROM orderIdToUserId WHERE user_id = ?", (message.from_user.id,))
+        orderCodeList = fetch_as_dicts("SELECT * FROM orderCodeToUserId WHERE user_id = ?", (message.from_user.id,))
         log(message.from_user.id, f"{len(orderCodeList)} ordersCode fetched from database")
 
         if not orderCodeList:
