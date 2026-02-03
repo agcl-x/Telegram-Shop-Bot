@@ -127,8 +127,9 @@ def make_order2(message, newOrder):
 
     elif message.text == "<- Назад":
         log(message.from_user.id, '"Back" button pressed')
-        make_order1(message)
+        back_to_main(message)
         return
+
 
     articleMode = False
 
