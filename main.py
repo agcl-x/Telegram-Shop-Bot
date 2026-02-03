@@ -749,7 +749,7 @@ def formMessageText(nomenclature, user_id):
     return s_ResultMessage
 
 def sendMessage():
-    log_sys('/change_order_status called')
+    log_sys('/sendMessage called')
 
     for index, article in enumerate(activeProductPool):
         if article == config["LastSendedArticle"]:
@@ -782,15 +782,16 @@ def sendMessage():
             config['LastSendedArticle'] = article
             with open("config.json", "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
-                log_sys(f'Config saved after sending {article}')
+                log_sys(f'LastSendedArticle was dumped to config.json')
             return
 
         elif index == len(activeProductPool)-1:
-            log_sys(f'All products processed. Restarting index')
+            log_sys(f'All products processed. Restarting pool')
             config['LastSendedArticle'] = activeProductPool[0]
             with open("config.json", "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
-                log_sys(f'Config saved after sending {article}')
+                log_sys(f'LastSendedArticle was dumped to config.json')
+
 
 for hour in range(config["fromHour"], config["toHour"]):
     time_str = f"{hour:02d}:00"
