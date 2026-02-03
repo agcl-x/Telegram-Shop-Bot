@@ -152,7 +152,6 @@ def make_order2(message, newOrder):
     try:
         log(message.from_user.id, 'Trying to get nomenclature by article from 1C.')
         currProduct = oneCConn.getNomenclature(s_articleIn=currArt)
-        log(message.from_user.id, 'Nomenclature was successfully got')
     except Exception as e:
         log(message.from_user.id, f'[ERROR] Can`t find Nomenclature( Article : {currArt} ) in 1c: {e}')
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -163,71 +162,79 @@ def make_order2(message, newOrder):
         return
 
 
-    if currProduct:
-        currProductProp = currProduct.sl_productProperties
-        currProductCount = currProduct.nl_productCount
-        log(message.from_user.id, 'Creating newOrderItem.')
-        newOrderItem = dataStructures.orderItem(s_productArticleIn=currProduct.s_productArticle)
-        log(message.from_user.id, 'Trying to add newOrderItem to orderItemList.')
-        newOrder.coritl_orderItemsList.append(newOrderItem)
-        if articleMode:
-            log(message.from_user.id, 'Switching to articleMode.')
-            s_ResultMessage = formMessageText(currProduct, message.from_user.id)
-            imgList = []
-            log(message.from_user.id, 'Trying to get nomenclature images from 1c.')
-            try:
-                imgList = oneCConn.get_images(currProduct)
-            except Exception as e:
-                log(message.from_user.id, f'[ERROR] Images getting failure: {e}')
+    if not currProduct:
+        log(message.from_user.id, f'Can`t find Nomenclature (wrong article) ')
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
+                   types.KeyboardButton("🏠На головну"))
+        bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний момент неможливе.",
+                         reply_markup=markup)
 
-            if imgList:
-                media = []
-                for i, img in enumerate(imgList):
-                    log(message.from_user.id, 'Trying to add images to Telegram message.')
-                    if i == 0:
-                        if s_ResultMessage != "NULL":
-                            media.append(types.InputMediaPhoto(img, caption=s_ResultMessage, parse_mode='HTML'))
-                        else:
-                            log(message.from_user.id, '[ERROR] Can`t send unformed message')
-                            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                            markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
-                                       types.KeyboardButton("🏠На головну"))
-                            bot.send_message(message.chat.id, "❌ Помилка: Помилка форматування тексту.",
-                                             reply_markup=markup)
-                            return
+    log(message.from_user.id, 'Nomenclature was successfully got')
+    currProductProp = currProduct.sl_productProperties
+    currProductCount = currProduct.nl_productCount
+    log(message.from_user.id, 'Creating newOrderItem.')
+    newOrderItem = dataStructures.orderItem(s_productArticleIn=currProduct.s_productArticle)
+    log(message.from_user.id, 'Trying to add newOrderItem to orderItemList.')
+    newOrder.coritl_orderItemsList.append(newOrderItem)
+    if articleMode:
+        log(message.from_user.id, 'Switching to articleMode.')
+        s_ResultMessage = formMessageText(currProduct, message.from_user.id)
+        imgList = []
+        log(message.from_user.id, 'Trying to get nomenclature images from 1c.')
+        try:
+            imgList = oneCConn.get_images(currProduct)
+        except Exception as e:
+            log(message.from_user.id, f'[ERROR] Images getting failure: {e}')
+
+        if imgList:
+            media = []
+            for i, img in enumerate(imgList):
+                log(message.from_user.id, 'Trying to add images to Telegram message.')
+                if i == 0:
+                    if s_ResultMessage != "NULL":
+                        media.append(types.InputMediaPhoto(img, caption=s_ResultMessage, parse_mode='HTML'))
                     else:
-                        media.append(types.InputMediaPhoto(img))
-                bot.send_media_group(message.chat.id, media)
-                log(message.from_user.id, 'Telegram message was successfully sent')
-            else:
+                        log(message.from_user.id, '[ERROR] Can`t send unformed message')
+                        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                        markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"),
+                                       types.KeyboardButton("🏠На головну"))
+                        bot.send_message(message.chat.id, "❌ Помилка: Помилка форматування тексту.",
+                                    reply_markup=markup)
+                        return
+                else:
+                    media.append(types.InputMediaPhoto(img))
+            bot.send_media_group(message.chat.id, media)
+            log(message.from_user.id, 'Telegram message was successfully sent')
+        else:
                 bot.send_message(message.chat.id, s_ResultMessage, parse_mode='HTML')
                 log(message.from_user.id, 'Telegram message was sent without images')
 
-        workingPropetiesPool = []
-        log(message.from_user.id, 'Creating workingPropetiesPool.')
-        for i in range(len(currProductProp)):
-            if currProductCount[i] > 0:
-                log(message.from_user.id, f'Property {currProductProp[i]} was added to workingPropetiesPool.')
-                workingPropetiesPool.append(currProductProp[i])
-        if len(currProductProp) == 0:
-            return
-
-        log(message.from_user.id, 'Adding properties from workingPropetiesPool to ReplyKeyboardMarkup.')
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        row = []
-        counter = 0
-        for prop in workingPropetiesPool:
-            row.append(types.KeyboardButton(prop))
-            counter += 1
-            if counter % 3 == 0:
-                markup.row(*row)
-                row = []
-        if row:
-            markup.row(*row)
-
-        msg = bot.send_message(message.chat.id, "📏Виберіть характеристику товару", reply_markup=markup)
-        bot.register_next_step_handler(msg, make_order3, newOrder, currProduct)
+    workingPropetiesPool = []
+    log(message.from_user.id, 'Creating workingPropetiesPool.')
+    for i in range(len(currProductProp)):
+        if currProductCount[i] > 0:
+            log(message.from_user.id, f'Property {currProductProp[i]} was added to workingPropetiesPool.')
+            workingPropetiesPool.append(currProductProp[i])
+    if len(currProductProp) == 0:
         return
+
+    log(message.from_user.id, 'Adding properties from workingPropetiesPool to ReplyKeyboardMarkup.')
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    row = []
+    counter = 0
+    for prop in workingPropetiesPool:
+        row.append(types.KeyboardButton(prop))
+        counter += 1
+        if counter % 3 == 0:
+            markup.row(*row)
+            row = []
+    if row:
+        markup.row(*row)
+
+    msg = bot.send_message(message.chat.id, "📏Виберіть характеристику товару", reply_markup=markup)
+    bot.register_next_step_handler(msg, make_order3, newOrder, currProduct)
+    return
 
 def make_order3(message, newOrder, currProduct):
     log(message.from_user.id, "make_order3 called")
