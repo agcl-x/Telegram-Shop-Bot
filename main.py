@@ -169,6 +169,7 @@ def make_order2(message, newOrder):
                    types.KeyboardButton("🏠На головну"))
         bot.send_message(message.chat.id, "❌ Помилка: отримання даних про цей товар на даний момент неможливе.",
                          reply_markup=markup)
+        return
 
     log(message.from_user.id, 'Nomenclature was successfully got')
     currProductProp = currProduct.sl_productProperties
