@@ -442,6 +442,9 @@ def contact_to_manager(message):
         bot.send_message(message.chat.id, msg, parse_mode='HTML')
         log(message.from_user.id, "Confirmation message sent to user")
 
+    else:
+        log(message.from_user.id, f"!!!config AdminID list is empty!!!")
+        bot.send_message(message.chat.id, "⚠ Не вдалося звʼязатися з менеджером!")
 
 @bot.message_handler(func=lambda message: message.text == "🏠На головну")
 def back_to_main(message):
