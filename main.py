@@ -268,7 +268,7 @@ def make_order3(message, newOrder, currProduct):
         else:
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
             markup.add(types.KeyboardButton("✉Зв'язатися з менеджером"), types.KeyboardButton("🏠На головну"))
-            log(message.from_user.id, f'[ERROR] Товар {currProduct.s_productArticle} {prop} не доступний')
+            log(message.from_user.id, f'[ERROR] Product {currProduct.s_productArticle} {prop} is not available')
             bot.send_message(message.chat.id, "❌ Помилка: Вибір не наявного товару.", reply_markup=markup)
     else:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -304,9 +304,15 @@ def make_order4(message,newOrder):
         try:
             oneCConn.pushOrder(newOrder)
         except Exception as e:
-            pass
+            log(message.from_user.id, f'[ERROR] Cannot push order to 1C: {e}')
+            if len(config["adminIDs"]) > 0:
+                try:
+                    adminChat = bot.get_chat(config["adminIDs"][0])
+                except Exception as e:
+                    log(message.from_user.id, f'[ERROR] Cannot access admin chat')
+            bot.send_message(adminChat.id , f"Помилка вигрузки замовлення в 1с: {str(newOrder)}")
 
-        finish_data_colect(message, newOrder)
+        submit_order_making(message, newOrder)
 
 def get_PIB(message, newOrder):
     log(message.from_user.id, "get_PIB called")
@@ -392,7 +398,6 @@ def finish_data_colect(message, newOrder):
 
 
 def submit_order_making(message, newOrder):
-    log(message.from_user.id, '"To main page" button pressed')
 
     log(message.from_user.id, 'Forming confirmation message')
     s_ResultMessage = (
