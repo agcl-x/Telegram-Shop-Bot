@@ -416,17 +416,21 @@ def submit_order_making(message, newOrder):
 @bot.message_handler(func=lambda message: message.text == "✉Зв'язатися з менеджером")
 def contact_to_manager(message):
     log(message.from_user.id, '"Contact to manager" button pressed')
-    try:
-        adminChat = bot.get_chat(config["adminIDs"][0])
-        username = bot.get_chat(message.from_user.id).username
-        log(message.from_user.id, f"User username resolved: {username}")
+    if len(config["adminIDs"]) > 0:
+        try:
+            adminChat = bot.get_chat(config["adminIDs"][0])
+            username = bot.get_chat(message.from_user.id).username
+            log(message.from_user.id, f"User username resolved: {username}")
 
-        bot.send_message(
-            adminChat.id,
-            f'‼‼Запит на зворотній зв\'язок з користувачем <a href="https://t.me/{username}">{username}</a>‼‼',
-            parse_mode='HTML'
-        )
-        log(message.from_user.id, "Contact request sent to admin")
+            bot.send_message(
+                adminChat.id,
+                f'‼‼Запит на зворотній зв\'язок з користувачем <a href="https://t.me/{username}">{username}</a>‼‼',
+                parse_mode='HTML'
+            )
+            log(message.from_user.id, "Contact request sent to admin")
+        except Exception as e:
+            log(message.from_user.id, f"[ERROR] contact_to_manager(): {e}")
+            bot.send_message(message.chat.id, "⚠ Не вдалося звʼязатися з менеджером")
 
         msg = (
             "🧾 <b>Ваше звернення прийнято!</b>\n\n"
@@ -437,10 +441,6 @@ def contact_to_manager(message):
         )
         bot.send_message(message.chat.id, msg, parse_mode='HTML')
         log(message.from_user.id, "Confirmation message sent to user")
-
-    except Exception as e:
-        log(message.from_user.id, f"[ERROR] contact_to_manager(): {e}")
-        bot.send_message(message.chat.id, "⚠ Не вдалося звʼязатися з менеджером")
 
 
 @bot.message_handler(func=lambda message: message.text == "🏠На головну")
