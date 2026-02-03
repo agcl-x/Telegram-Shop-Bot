@@ -125,8 +125,12 @@ def make_order2(message, newOrder):
         back_to_main(message)
         return
 
-    articleMode = False
+    elif message.text == "<- Назад":
+        log(message.from_user.id, '"Back" button pressed')
+        make_order1(message)
+        return
 
+    articleMode = False
 
     if message.caption:
         log(message.from_user.id, 'Forwarded message detected. Getting product article.')
