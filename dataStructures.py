@@ -44,7 +44,7 @@ class orderItem:
         return {f'{self.s_productArticle}': self.s_productProperties}
 
 class Order:
-    def __init__(self, cus_orderCustomerIn, coritl_orderItemsListIn, n_orderCodeIn =0):
+    def __init__(self, cus_orderCustomerIn = None, coritl_orderItemsListIn = [], n_orderCodeIn =0):
         self.cus_orderCustomer = cus_orderCustomerIn
         self.coritl_orderItemsList = coritl_orderItemsListIn
         self.s_TTN = ""
